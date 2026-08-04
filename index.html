@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web DJ · 无硬件控制台</title>
+<style>
+  :root{
+    --bg:#15171c; --panel:#1f232b; --panel2:#272c36; --line:#3a4150;
+    --txt:#e8ecf3; --mut:#9aa4b5; --accentA:#378ADD; --accentB:#7F77DD;
+  }
+  *{box-sizing:border-box; -webkit-user-select:none; user-select:none;}
+  body{margin:0; background:var(--bg); color:var(--txt);
+    font-family:system-ui,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;}
+  header{display:flex; align-items:center; gap:16px; padding:14px 20px;
+    border-bottom:1px solid var(--line);}
+  header h1{font-size:16px; margin:0; font-weight:600;}
+  .btn{background:var(--accentA); color:#fff; padding:8px 14px; border-radius:8px;
+    font-size:13px; cursor:pointer; border:none;}
+  .btn:hover{filter:brightness(1.1);}
+  .btn.rec-on{background:#fff;color:#E24B4A;}
+  .stage{display:flex; gap:14px; padding:16px; align-items:stretch;}
+  .deck{flex:1; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:14px; display:flex; flex-direction:column; gap:12px;}
+  .deck.a{--accent:var(--accentA);}
+  .deck.b{--accent:var(--accentB);}
+  .deck-head{display:flex; align-items:center; gap:10px;}
+  .tag{background:var(--accent); color:#fff; font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600;}
+  .track-name{font-size:12px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .wheel-wrap{display:flex; justify-content:center; padding:6px 0;}
+  .progress-ring{width:180px; height:180px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center;
+    background:conic-gradient(var(--accent) 0deg, rgba(255,255,255,0.06) 0deg);}
+  .jog{width:150px; height:150px; border-radius:50%; position:relative; cursor:grab;
+    background:radial-gradient(circle at 50% 40%, #3a4150, #15171c 70%);
+    border:2px solid var(--line);}
+  .jog:active{cursor:grabbing;}
+  .jog-mark{position:absolute; top:8px; left:50%; width:4px; height:26px;
+    background:var(--accent); transform:translateX(-50%); border-radius:2px;}
+  .time{text-align:center; font-size:12px; color:var(--mut); font-variant-numeric:tabular-nums;}
+  .bar{height:6px; background:#0e1014; border-radius:4px; overflow:hidden; cursor:pointer;}
+  .bar-fill{height:100%; width:0%; background:var(--accent);}
+  .wave-wrap{position:relative; height:46px; margin-top:4px; background:#0e1014; border-radius:6px; overflow:hidden;}
+  .wave{width:100%; height:100%; display:block;}
+  .wave-head{position:absolute; top:0; bottom:0; width:2px; background:var(--accent); left:0; pointer-events:none; box-shadow:0 0 6px var(--accent);}
+  .transport{display:flex; gap:8px; justify-content:center;}
+  .transport button{flex:1; padding:9px 0; font-size:12px; border-radius:8px; cursor:pointer;
+    background:var(--panel2); color:var(--txt); border:1px solid var(--line);}
+  .transport button:hover{border-color:var(--accent);}
+  .transport button.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .deck-bottom{display:flex; gap:14px; justify-content:space-between; align-items:flex-end;}
+  .eq{display:flex; gap:14px;}
+  .eq .knob-wrap, .fader-wrap{display:flex; flex-direction:column; align-items:center; gap:6px;}
+  .knob{width:48px; height:48px; border-radius:50%; position:relative; cursor:ns-resize;
+    background:radial-gradient(circle at 50% 35%, #2c323d, #15171c); border:1px solid var(--line);}
+  .knob-ind{position:absolute; top:5px; left:50%; width:3px; height:16px; background:var(--accent);
+    transform-origin:50% 19px; transform:translateX(-50%) rotate(0deg); border-radius:2px;}
+  .knob-wrap label, .fader-wrap label{font-size:11px; color:var(--mut);}
+  .faders{display:flex; gap:14px;}
+  .fader{position:relative; background:#0e1014; border:1px solid var(--line); border-radius:6px;}
+  .fader.vert{width:16px; height:120px;}
+  .fader.horiz{width:180px; height:16px;}
+  .fader .thumb{position:absolute; background:var(--accent); border-radius:4px;}
+  .fader.vert .thumb{left:0; right:0; height:18px;}
+  .fader.horiz .thumb{top:0; bottom:0; width:18px;}
+  .mixer{width:200px; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:14px; display:flex; flex-direction:column; gap:14px;}
+  .mixer h3{margin:0; font-size:12px; color:var(--mut); font-weight:600; text-align:center;}
+  .xf-row{display:flex; flex-direction:column; align-items:center; gap:8px;}
+  .vols{display:flex; gap:18px; justify-content:center;}
+  .playlist{margin:0 16px 18px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:14px;}
+  .playlist h2{margin:0 0 10px; font-size:14px;}
+  #trackList{list-style:none; margin:0; padding:0; max-height:200px; overflow:auto;}
+  #trackList li{display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px;
+    font-size:13px; cursor:pointer;}
+  #trackList li:hover{background:var(--panel2);}
+  #trackList li.sel{background:var(--panel2); outline:1px solid var(--accentA);}
+  #trackList .tname{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  #trackList .tdur{color:var(--mut); font-size:12px; font-variant-numeric:tabular-nums;}
+  #trackList button{background:var(--panel2); color:var(--txt); border:1px solid var(--line);
+    border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer;}
+  #trackList button:hover{border-color:var(--accentA);}
+  .hint{font-size:11px; color:var(--mut); margin-top:8px;}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;}
+  .assist-row{display:flex;gap:14px;margin:0 16px 14px;}
+  .assist-panel{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;}
+  .assist-panel h3{font-size:12px;margin:0 0 8px;color:var(--mut);}
+  .assist-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px;}
+  .assist-grid span{font-weight:600;color:var(--txt);}
+  .assist-grid .ok{color:#5DCAA5;}.assist-grid .warn{color:#EF9F27;}.assist-grid .bad{color:#E24B4A;}
+  .beat-phase{display:flex;align-items:center;gap:10px;margin-top:8px;}
+  .beat-dot{width:12px;height:12px;border-radius:50%;background:#3a4150;transition:background 0.08s;}
+  .beat-dot.on{background:var(--accentA);transform:scale(1.4);}
+  .beat-dot.on.b{background:var(--accentB);}
+  .tap-btn{font-size:11px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel2);color:var(--txt);cursor:pointer;margin-left:8px;}
+  .tap-btn:active{background:var(--accentA);}
+  .shortcuts-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:100;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .shortcuts-overlay table{border-collapse:collapse;font-size:13px;}
+  .shortcuts-overlay td{padding:6px 14px;border-bottom:1px solid #2c2c2a;}
+  .shortcuts-overlay td:first-child{color:var(--accentA);font-weight:600;text-align:right;}
+  .shortcuts-overlay h2{font-size:16px;margin:0 0 14px;}
+  .shortcuts-overlay .close{position:absolute;top:20px;right:30px;font-size:22px;cursor:pointer;color:var(--mut);}
+  .auto-dj-bar{display:flex;align-items:center;gap:12px;margin:0 16px 10px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 14px;}
+  .auto-dj-bar .status{padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;}
+  .auto-dj-bar .status.off{background:#3a4150;color:var(--mut);}
+  .auto-dj-bar .status.on{background:#1D9E75;color:#fff;}
+  .auto-dj-bar .status.trans{background:#EF9F27;color:#fff;}
+  .auto-dj-bar .trans-bar{flex:1;height:6px;border-radius:3px;background:#0e1014;overflow:hidden;}
+  .auto-dj-bar .trans-bar-fill{height:100%;width:0;background:#EF9F27;transition:width 0.3s;}
+  .auto-dj-bar .next-track{font-size:12px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;}
+  .auto-dj-bar button{padding:5px 12px;font-size:12px;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--txt);cursor:pointer;}
+  .auto-dj-bar button:hover{border-color:var(--accentA);}
+</style>
+</head>
+<body>
+<header>
+  <h1>Web DJ · 无硬件控制台</h1>
+  <button class="btn" type="button" id="addBtn">+ 添加歌曲</button>
+  <button class="btn" type="button" id="recBtn" style="background:#E24B4A">● 录制</button>
+  <input id="fileInput" type="file" accept="audio/*" multiple class="sr-only">
+  <span class="hint">纯浏览器运行（Web Audio API），无需任何外接设备</span>
+  <span id="importStatus" class="hint"></span>
+  <div id="errors" class="hint" style="color:#F09595;white-space:pre-wrap;max-height:80px;overflow:auto;display:none"></div>
+</header>
+
+<div class="auto-dj-bar" id="autoDJBar">
+  <button id="autoDJToggle">Auto DJ: OFF</button>
+  <span class="status off" id="autoDJStatus">就绪</span>
+  <div class="trans-bar" id="autoDJTrans"><div class="trans-bar-fill" id="autoDJTransFill"></div></div>
+  <span class="next-track" id="autoDJNext">--</span>
+</div>
+
+<div class="stage">
+  <!-- DECK A -->
+  <section class="deck a" id="deckA">
+    <div class="deck-head"><span class="tag">DECK A</span><span class="track-name" id="a-name">未载入</span></div>
+    <div class="wheel-wrap">
+      <div class="progress-ring" id="a-ring">
+        <div class="jog" id="a-jog"><div class="jog-mark"></div></div>
+      </div>
+    </div>
+    <div class="time"><span id="a-cur">0:00</span> / <span id="a-dur">0:00</span></div>
+    <div class="bar" id="a-bar"><div class="bar-fill" id="a-fill"></div></div>
+    <div class="wave-wrap"><canvas class="wave" id="a-wave"></canvas><div class="wave-head" id="a-wavehead"></div></div>
+    <div class="transport">
+      <button data-act="load">载入</button>
+      <button data-act="play">播放/暂停</button>
+      <button data-act="cue">CUE 监听</button>
+      <button data-act="sync">SYNC</button>
+    </div>
+    <div class="deck-bottom">
+      <div class="eq">
+        <div class="knob-wrap"><div class="knob eq-low"><div class="knob-ind"></div></div><label>低</label></div>
+        <div class="knob-wrap"><div class="knob eq-mid"><div class="knob-ind"></div></div><label>中</label></div>
+        <div class="knob-wrap"><div class="knob eq-high"><div class="knob-ind"></div></div><label>高</label></div>
+      </div>
+      <div class="faders">
+        <div class="fader-wrap"><div class="fader vert pitch"><div class="thumb"></div></div><label>调速</label></div>
+        <div class="fader-wrap"><div class="fader vert chan"><div class="thumb"></div></div><label>通道</label></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MIXER -->
+  <section class="mixer">
+    <h3>调音台 MIXER</h3>
+    <div class="xf-row">
+      <div class="fader horiz" id="crossfader"><div class="thumb"></div></div>
+      <label style="font-size:11px;color:var(--mut)">交叉推子</label>
+    </div>
+    <div class="vols">
+      <div class="fader-wrap"><div class="fader vert" id="master"><div class="thumb"></div></div><label>主音量</label></div>
+      <div class="fader-wrap"><div class="fader vert" id="cuevol"><div class="thumb"></div></div><label>监听</label></div>
+    </div>
+    <p class="hint">浏览器为单输出：CUE 监听会与原曲一起从扬声器播出。真·耳机分离需外置声卡。</p>
+  </section>
+
+  <!-- DECK B -->
+  <section class="deck b" id="deckB">
+    <div class="deck-head"><span class="tag">DECK B</span><span class="track-name" id="b-name">未载入</span></div>
+    <div class="wheel-wrap">
+      <div class="progress-ring" id="b-ring">
+        <div class="jog" id="b-jog"><div class="jog-mark"></div></div>
+      </div>
+    </div>
+    <div class="time"><span id="b-cur">0:00</span> / <span id="b-dur">0:00</span></div>
+    <div class="bar" id="b-bar"><div class="bar-fill" id="b-fill"></div></div>
+    <div class="wave-wrap"><canvas class="wave" id="b-wave"></canvas><div class="wave-head" id="b-wavehead"></div></div>
+    <div class="transport">
+      <button data-act="load">载入</button>
+      <button data-act="play">播放/暂停</button>
+      <button data-act="cue">CUE 监听</button>
+      <button data-act="sync">SYNC</button>
+    </div>
+    <div class="deck-bottom">
+      <div class="eq">
+        <div class="knob-wrap"><div class="knob eq-low"><div class="knob-ind"></div></div><label>低</label></div>
+        <div class="knob-wrap"><div class="knob eq-mid"><div class="knob-ind"></div></div><label>中</label></div>
+        <div class="knob-wrap"><div class="knob eq-high"><div class="knob-ind"></div></div><label>高</label></div>
+      </div>
+      <div class="faders">
+        <div class="fader-wrap"><div class="fader vert pitch"><div class="thumb"></div></div><label>调速</label></div>
+        <div class="fader-wrap"><div class="fader vert chan"><div class="thumb"></div></div><label>通道</label></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="playlist">
+  <h2>播放列表 Playlist <button class="tap-btn" id="smartOrderBtn" style="float:right">智能排序 (BPM)</button></h2>
+  <ul id="trackList"></ul>
+  <p class="hint">点击某首歌选中（高亮），再点唱盘的「载入」；或直接点歌曲右侧的 →A / →B 一键载入。播放结束自动续播列表下一首。</p>
+</section>
+
+<div class="assist-row">
+  <section class="assist-panel" style="flex:1">
+    <h3>节拍检测 BPM<button class="tap-btn" id="tapA">TAP A</button></h3>
+    <div>Deck A: <span id="bpm-a">--</span> BPM &nbsp; Deck B: <span id="bpm-b">--</span> BPM <button class="tap-btn" id="tapB">TAP B</button></div>
+    <div>BPM 差: <span id="bpm-diff">--</span> &nbsp; 调性: A=<span id="key-a">--</span> B=<span id="key-b">--</span> <span id="key-compat" style="font-size:12px"></span></div>
+    <div class="beat-phase" style="margin-top:6px">
+      <span style="font-size:11px;color:var(--mut)">节拍对齐</span>
+      <span class="beat-dot" id="beat-a"></span><span class="beat-dot" id="beat-b"></span>
+    </div>
+  </section>
+  <section class="assist-panel" style="flex:1">
+    <h3>切歌建议</h3>
+    <div id="transition-hint" style="font-size:12px;color:var(--mut)">载入两首歌曲后自动分析</div>
+  </section>
+</div>
+
+<div class="shortcuts-overlay" id="shortcuts" style="display:none">
+  <span class="close" id="shortcutsClose">&times;</span>
+  <h2>快捷键 Shortcuts（按 ? 打开/关闭）</h2>
+  <table>
+    <tr><td>1 / 2</td><td>播放/暂停 Deck A / B</td></tr>
+    <tr><td>Q / W</td><td>载入选定歌曲到 Deck A / B</td></tr>
+    <tr><td>A / B</td><td>CUE 监听 Deck A / B</td></tr>
+    <tr><td>S</td><td>BPM 同步（Deck B → A 或选中向另一个对齐）</td></tr>
+    <tr><td>← →</td><td>微调当前 Deck 调速 ±0.02</td></tr>
+    <tr><td>↑ ↓</td><td>微调交叉推子 ±0.05</td></tr>
+    <tr><td>Tab</td><td>快切交叉推子（全左/全右）</td></tr>
+    <tr><td>F</td><td>执行交叉渐变过渡（8 秒）</td></tr>
+    <tr><td>T</td><td>打开/关闭 Auto DJ</td></tr>
+    <tr><td>?</td><td>显示/隐藏此快捷键面板</td></tr>
+  </table>
+</div>
+
+<script>
+const qs = id => document.getElementById(id);
+window.addEventListener('error', function(e){
+  const el = qs('errors'); if(el){ el.style.display='block'; el.textContent += '[ERR] '+e.message+'\n'; }
+});
+
+/* ---------- 音频环境 ---------- */
+let AC = null, masterBus, cueBus, reverbNode, reverbWet, recDest;
+function ensureAudio(){
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  // 两条输出总线：masterBus 送扬声器，cueBus 送监听（浏览器单输出下二者都会出声）
+  masterBus = AC.createGain(); masterBus.gain.value = 0.9;
+  cueBus   = AC.createGain(); cueBus.gain.value   = 0.7;
+  masterBus.connect(AC.destination);
+  cueBus.connect(AC.destination);
+  const ir = AC.createBuffer(2, AC.sampleRate * 1.5, AC.sampleRate);
+  for (let ch=0; ch<2; ch++){ const d=ir.getChannelData(ch); for (let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/(AC.sampleRate*0.25)); }
+  reverbNode = AC.createConvolver(); reverbNode.buffer = ir;
+  reverbWet = AC.createGain(); reverbWet.gain.value = 0;
+  reverbNode.connect(reverbWet); reverbWet.connect(masterBus);
+  // 混音导出：把主输出同时接一个 MediaStreamDestination，供 MediaRecorder 录制
+  recDest = AC.createMediaStreamDestination();
+  masterBus.connect(recDest);
+}
+
+/* ---------- IndexedDB 持久化 ---------- */
+const DB_NAME='webdj_db', DB_VER=1;
+function openDB(){
+  return new Promise((resolve, reject) => {
+    const r=indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('files'))db.createObjectStore('files');if(!db.objectStoreNames.contains('playlistMeta'))db.createObjectStore('playlistMeta');};
+    r.onsuccess=e=>resolve(e.target.result);
+    r.onerror=e=>reject(e.target.error);
+  });
+}
+async function dbPut(storeName, key, value){
+  const db=await openDB();
+  return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).put(value,key);tx.oncomplete=resolve;tx.onerror=e=>reject(e.target.error);});
+}
+async function dbGet(storeName, key){
+  const db=await openDB();
+  return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readonly');const r=tx.objectStore(storeName).get(key);r.onsuccess=()=>resolve(r.result);r.onerror=e=>reject(e.target.error);});
+}
+async function dbDelete(storeName, key){
+  const db=await openDB();
+  return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).delete(key);tx.oncomplete=resolve;tx.onerror=e=>reject(e.target.error);});
+}
+
+async function persistFile(fileId, blob){ try{ await dbPut('files', fileId, blob); }catch(e){ console.warn('persistFile failed', e); } }
+async function removeFile(fileId){ try{ await dbDelete('files', fileId); }catch(e){ console.warn('removeFile failed', e); } }
+async function persistPlaylist(){
+  try{
+    const meta=tracks.map(t=>({name:t.name,duration:t.duration,bpm:t.bpm,key:t.key,introEnd:t.introEnd,outroStart:t.outroStart,analyzed:t.analyzed,fileId:t.fileId}));
+    await dbPut('playlistMeta','tracks',JSON.stringify(meta));
+  }catch(e){console.warn('persistPlaylist failed',e);}
+}
+
+async function restorePlaylist(){
+  try{
+    const raw=await dbGet('playlistMeta','tracks');
+    if(!raw) return;
+    const meta=JSON.parse(raw);
+    if(!Array.isArray(meta)) return;
+    for(const m of meta){
+      const blob=await dbGet('files', m.fileId);
+      const url=blob?URL.createObjectURL(blob):null;
+      tracks.push({...m, url, unavailable:!url});
+      if(!url) console.warn('File missing in DB:', m.name);
+    }
+    renderPlaylist();
+    feedback(`已恢复 ${tracks.length} 首歌曲`);
+  }catch(e){console.warn('restorePlaylist failed',e); tracks=[];}
+}
+
+/* ---------- 播放列表变更时自动保存 ---------- */
+let _savePending=false;
+function scheduleSave(){
+  if(_savePending) return; _savePending=true;
+  setTimeout(async()=>{_savePending=false; await persistPlaylist();}, 300);
+}
+
+/* ---------- Deck：单路唱盘音频图 ---------- */
+class Deck {
+  constructor(prefix){
+    this.prefix = prefix;
+    this.audio = new Audio();
+    this.audio.preload = 'metadata';
+    this.audio.preservesPitch = true;        // 变速不变调，Chrome 原生时间伸缩
+    this.graphReady = false;
+    this.rate = 1; this.rotation = 0; this.cueOn = false;
+    this.eq = {}; this.source = null;
+    this.loaded = false; this.name = ''; this.loadedIndex = null;
+    this._last = performance.now();
+    this.bpm = 0; this.detectedKey = ''; this._fluxHist = []; this.beatTimes = [];
+    this._prevLow = 0; this._lastBeat = 0; this._lastAnalysis = 0;
+    this.energySamples = []; this._energySampleTime = 0;
+  }
+  ensureGraph(){
+    if (this.graphReady) return;
+    ensureAudio();
+    // 音频图（信号流）：
+    // source → [low shelf → mid peaking → high shelf] EQ → channelGain → crossGain → masterBus(扬声器)
+    //                                              └→ channelGain → cueGain → cueBus(监听)
+    //                                              └→ channelGain → reverbSend → 全局混响 → masterBus
+    this.source = AC.createMediaElementSource(this.audio);
+    this.analyser = AC.createAnalyser(); this.analyser.fftSize = 2048;
+    this.source.connect(this.analyser);
+    const low  = AC.createBiquadFilter(); low.type='lowshelf';  low.frequency.value=320;
+    const mid  = AC.createBiquadFilter(); mid.type='peaking';   mid.frequency.value=1000; mid.Q.value=0.9;
+    const high = AC.createBiquadFilter(); high.type='highshelf'; high.frequency.value=3200;
+    this.eq = {low, mid, high};
+    this.channelGain = AC.createGain(); this.channelGain.gain.value = 1;
+    this.crossGain   = AC.createGain(); this.crossGain.gain.value   = 0.707;
+    this.cueGain     = AC.createGain(); this.cueGain.gain.value     = 0;
+    this.source.connect(low); low.connect(mid); mid.connect(high); high.connect(this.channelGain);
+    this.channelGain.connect(this.crossGain); this.crossGain.connect(masterBus);
+    this.channelGain.connect(this.cueGain);   this.cueGain.connect(cueBus);
+    this.reverbSend = AC.createGain(); this.reverbSend.gain.value = 0;
+    this.channelGain.connect(this.reverbSend); this.reverbSend.connect(reverbNode);
+    this.graphReady = true;
+    this.audio.addEventListener('ended', () => onDeckEnded(this));
+  }
+  load(url, name, index){
+    this.ensureGraph();
+    // 换歌时释放上一首的 blob URL，避免 Object URL 泄漏
+    if (this.audio.src && this.audio.src.startsWith('blob:')) URL.revokeObjectURL(this.audio.src);
+    this.audio.src = url; this.name = name; this.loadedIndex = index; this.loaded = true;
+    // 重置本路分析状态与波形，准备分析新歌
+    this.bpm = 0; this.detectedKey=''; this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
+    this.energySamples = []; this.peaks = null;
+    this.loadWaveform(url);
+  }
+  async play(){
+    this.ensureGraph();
+    if (AC.state === 'suspended') await AC.resume();
+    await this.audio.play();
+  }
+  pause(){ this.audio.pause(); }
+  toggle(){ this.audio.paused ? this.play() : this.pause(); }
+  setRate(r){ this.rate = r; this.audio.playbackRate = r; }
+  setEQ(band, db){ if (this.eq && this.eq[band]) this.eq[band].gain.value = db; }
+  setChannel(g){ if (this.channelGain) this.channelGain.gain.value = g; }
+  setCross(g){ if (this.crossGain) this.crossGain.gain.value = g; }
+  setCue(on){ this.cueOn = on; if (this.cueGain) this.cueGain.gain.value = on ? 1 : 0; }
+  setReverb(v){ if (this.reverbSend) this.reverbSend.gain.value = v; }
+  getLowEnergy(){
+    if (!this.analyser) return 0;
+    const buf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(buf);
+    let sum = 0; for (let i=2;i<12;i++) sum += Math.pow(10, buf[i]/20);
+    return sum / 10;
+  }
+  detectBeat(now){
+    // 频谱通量法：只关注低频(底鼓)帧间能量的"突然增大"作为拍点 onset，
+    // 用滑动窗口自适应阈值过滤持续轰鸣，再用拍点间隔直方图选出最稳定的 BPM。
+    if (!this.audio.duration || this.audio.paused) return false;
+    if (now - this._lastAnalysis < 0.03) return false;   // 节流到约 30fps，省 CPU
+    this._lastAnalysis = now;
+    const energy = this.getLowEnergy();
+    const flux = Math.max(0, energy - this._prevLow);
+    this._prevLow = energy;
+    this._fluxHist.push(flux);
+    if (this._fluxHist.length > 50) this._fluxHist.shift();
+    const avgFlux = this._fluxHist.reduce((a,b)=>a+b,0)/this._fluxHist.length;
+    const threshold = avgFlux * 2.2;
+    if (flux > Math.max(threshold, 0.01) && now - this._lastBeat > 0.22){
+      this._lastBeat = now;
+      this.beatTimes.push(performance.now());
+      if (this.beatTimes.length > 40) this.beatTimes.shift();
+      if (this.beatTimes.length >= 4){
+        const intervals = [];
+        for (let i=1;i<this.beatTimes.length;i++) intervals.push(this.beatTimes[i]-this.beatTimes[i-1]);
+        const hist = {};
+        intervals.forEach(iv => {
+          const bucket = Math.round(iv/5)*5;
+          hist[bucket] = (hist[bucket]||0)+1;
+        });
+        let best = 0, bestCnt = 0;
+        for (const [k,v] of Object.entries(hist)){
+          const ms = +k;
+          if (v > bestCnt && ms > 200 && ms < 2000){ best = ms; bestCnt = v; }
+        }
+        if (best > 0){
+          let newBPM = Math.round(60000 / best);
+          // 八度折叠：电子/舞曲常把半拍误判成双倍 BPM（如 75→150），折回合理区间
+          while (newBPM > 170) newBPM /= 2;
+          while (newBPM < 60)  newBPM *= 2;
+          this.bpm = this.bpm > 0 ? Math.round(this.bpm*0.65 + newBPM*0.35) : newBPM;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+  getBeatPhase(cur){
+    if (!this.bpm) return 0;
+    const interval = 60/this.bpm;
+    return (cur % interval) / interval;
+  }
+  estimateKey(){
+    if (!this.analyser || !this.audio.duration || this.audio.paused) return '';
+    const freqBuf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(freqBuf);
+    const sr = this.analyser.context.sampleRate, fftS = this.analyser.fftSize, bw = sr/fftS;
+    const chroma = [0,0,0,0,0,0,0,0,0,0,0,0];
+    const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    for (let i=0;i<freqBuf.length;i++){
+      const f = i*bw; if (f<50||f>4000) continue;
+      const mag = Math.pow(10, freqBuf[i]/20);
+      const pc = Math.round(69+12*Math.log2(f/440))%12;
+      if (pc>=0) chroma[pc] += mag;
+    }
+    let mx=0,mi=0;
+    for (let i=0;i<12;i++){ if(chroma[i]>mx){mx=chroma[i];mi=i;} }
+    this.detectedKey = names[mi];
+    return this.detectedKey;
+  }
+  /* 解码音频并预计算波形峰值，绘制到唱盘下方 canvas */
+  loadWaveform(url){
+    if(!url || !url.startsWith('blob:')) return;
+    ensureAudio();
+    fetch(url).then(r => r.arrayBuffer())
+      .then(ab => AC.decodeAudioData(ab))
+      .then(buf => {
+        const data = buf.getChannelData(0);          // 取左声道
+        const N = 800, step = Math.floor(data.length / N) || 1;
+        const peaks = new Float32Array(N);
+        for(let i=0;i<N;i++){
+          let max = 0; const s = i*step;
+          for(let j=0;j<step;j++){ const v = Math.abs(data[s+j]||0); if(v>max) max = v; }
+          peaks[i] = max;
+        }
+        this.peaks = peaks; this.drawWave();
+      })
+      .catch(e => console.warn('waveform decode failed', e));
+  }
+  drawWave(){
+    const cv = qs(this.prefix + '-wave'); if(!cv || !this.peaks) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if(!w || !h) return;
+    cv.width = w*dpr; cv.height = h*dpr;
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,w,h);
+    const n = this.peaks.length, bw = w/n;
+    ctx.fillStyle = getComputedStyle(cv).getPropertyValue('--accent') || '#378ADD';
+    for(let i=0;i<n;i++){
+      const bh = Math.max(1, this.peaks[i]*h);
+      ctx.fillRect(i*bw, (h-bh)/2, Math.max(1, bw-0.5), bh);
+    }
+  }
+}
+
+const deckA = new Deck('a'), deckB = new Deck('b');
+const decks = {a: deckA, b: deckB};
+
+/* 按 BPM 比例做真正的 beatmatch：把 dst 的播放速率调整到与 src 相同 BPM */
+function syncBPM(dst, src){
+  if(!dst.bpm || !src.bpm){ feedback('BPM 尚未检测完成，暂无法同步'); return; }
+  // 检测到的 BPM 已包含当前播放速率；比例换算：新速率 = 当前速率 × 目标BPM / 当前BPM
+  const target = dst.rate * src.bpm / dst.bpm;
+  dst.setRate(Math.max(0.5, Math.min(1.5, target)));
+  if(pitchCtrl[dst.prefix]) pitchCtrl[dst.prefix].set(dst.rate);
+  feedback('BPM 已同步 → '+dst.prefix.toUpperCase()+' ('+Math.round(src.bpm)+' BPM)');
+}
+
+/* ---------- 控件工厂：旋钮 / 推子 ---------- */
+function makeKnob(el, {min, max, value=0, onChange}){
+  let val = value; const ind = el.querySelector('.knob-ind');
+  if (!el || !ind) return { set(){}, get:() => value };
+  function render(){
+    const t = (val - min) / (max - min);
+    ind.style.transform = `translateX(-50%) rotate(${-135 + t*270}deg)`;
+    onChange && onChange(val);
+  }
+  let sy, sv, active=false;
+  el.addEventListener('pointerdown', e => { active=true; sv=val; sy=e.clientY; el.setPointerCapture(e.pointerId); });
+  el.addEventListener('pointermove', e => { if(!active) return; const dy=sy-e.clientY; val=Math.max(min, Math.min(max, sv+dy*0.3)); render(); });
+  el.addEventListener('pointerup',   () => { active=false; });
+  el.addEventListener('wheel', e => { e.preventDefault(); val=Math.max(min, Math.min(max, val - Math.sign(e.deltaY)*2)); render(); }, {passive:false});
+  render();
+  return { set:v => { val=v; render(); }, get:() => val };
+}
+function makeFader(el, {min, max, value, vertical=true, onChange}){
+  let val = value; const thumb = el.querySelector('.thumb');
+  if (!el || !thumb) return { set(){}, get:() => value };
+  function render(){
+    const t = (val - min) / (max - min);
+    if (vertical) thumb.style.bottom = (t*100) + '%';
+    else          thumb.style.left   = (t*100) + '%';
+    onChange && onChange(val);
+  }
+  let sp, sv, active=false;
+  el.addEventListener('pointerdown', e => { active=true; sv=val; sp=vertical?e.clientY:e.clientX; el.setPointerCapture(e.pointerId); });
+  el.addEventListener('pointermove', e => {
+    if(!active) return;
+    const pos = vertical?e.clientY:e.clientX;
+    const rect = el.getBoundingClientRect();
+    const size = vertical?rect.height:rect.width;
+    const delta = (sp - pos) / size;          // 向上/向右为正
+    let t = (sv - min)/(max - min) + delta;
+    t = Math.max(0, Math.min(1, t));
+    val = min + t*(max - min); render();
+  });
+  el.addEventListener('pointerup', () => { active=false; });
+  el.addEventListener('wheel', e => { e.preventDefault(); let t=(val-min)/(max-min) - Math.sign(e.deltaY)*0.05; t=Math.max(0,Math.min(1,t)); val=min+t*(max-min); render(); }, {passive:false});
+  render();
+  return { set:v => { val=v; render(); }, get:() => val };
+}
+
+/* ---------- 绑定两个唱盘 ---------- */
+const pitchCtrl = {a:null, b:null};
+['a','b'].forEach(prefix => {
+  const sec = qs(prefix === 'a' ? 'deckA' : 'deckB');
+  const d = decks[prefix];
+
+  sec.querySelectorAll('[data-act]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const act = btn.dataset.act;
+      if (act === 'play') d.toggle();
+      else if (act === 'cue'){ d.setCue(!d.cueOn); btn.classList.toggle('active', d.cueOn); }
+      else if (act === 'sync'){
+        const o = prefix === 'a' ? deckB : deckA;
+        syncBPM(d, o);
+      }
+      else if (act === 'load'){ if (selectedIndex != null) loadTrack(selectedIndex, prefix); }
+    });
+  });
+
+  makeKnob(sec.querySelector('.eq-low'),  {min:-26, max:26, value:0, onChange:v => d.setEQ('low',  v)});
+  makeKnob(sec.querySelector('.eq-mid'),  {min:-26, max:26, value:0, onChange:v => d.setEQ('mid',  v)});
+  makeKnob(sec.querySelector('.eq-high'), {min:-26, max:26, value:0, onChange:v => d.setEQ('high', v)});
+
+  pitchCtrl[prefix] = makeFader(sec.querySelector('.pitch'), {min:0.5, max:1.5, value:1, vertical:true, onChange:v => d.setRate(v)});
+  makeFader(sec.querySelector('.chan'), {min:0, max:1, value:1, vertical:true, onChange:v => d.setChannel(v)});
+
+  const jog = sec.querySelector('.jog');
+  let js, jc, jactive=false;
+  jog.addEventListener('pointerdown', e => { jactive=true; js=e.clientY; jc=d.audio.currentTime; jog.setPointerCapture(e.pointerId); });
+  jog.addEventListener('pointermove', e => { if(!jactive) return; const dur=d.audio.duration||1; d.audio.currentTime = Math.max(0, Math.min(dur, jc + (js - e.clientY)*0.5)); });
+  jog.addEventListener('pointerup', () => { jactive=false; });
+
+  const bar = sec.querySelector('.bar');
+  bar.addEventListener('click', e => { const r=bar.getBoundingClientRect(); const f=(e.clientX-r.left)/r.width; if(d.audio.duration) d.audio.currentTime=f*d.audio.duration; });
+});
+
+/* ---------- 调音台 ---------- */
+const crossCtrl = makeFader(qs('crossfader'), {min:0, max:1, value:0.5, vertical:false, onChange:p => {
+  deckA.setCross(Math.cos(p*Math.PI/2));
+  deckB.setCross(Math.sin(p*Math.PI/2));
+}});
+makeFader(qs('master'), {min:0, max:1, value:0.9, vertical:true,  onChange:v => { ensureAudio(); masterBus.gain.value = v; }});
+makeFader(qs('cuevol'), {min:0, max:1, value:0.7, vertical:true,  onChange:v => { ensureAudio(); cueBus.gain.value   = v; }});
+
+/* ---------- 播放列表 ---------- */
+let tracks = [];           // {name, url, duration}
+let selectedIndex = null;
+const listEl = qs('trackList');
+
+const pendingAudio = [];
+function feedback(msg){ console.log('[feedback]', msg); const el = qs('importStatus'); if (el) el.textContent = msg; }
+function addFiles(files){
+  console.log('[addFiles] called, count:', files ? files.length : 0);
+  if (!files || !files.length){ feedback('未选择任何文件'); return; }
+  for (const f of files){
+    console.log('[addFiles] file:', f.name, f.size, f.type);
+    const fileId = 'f_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+    persistFile(fileId, f);                                          // 异步存进 IndexedDB
+    const url = URL.createObjectURL(f);
+    console.log('[addFiles] blob:', url);
+    const track = {name: f.name, url, duration: 0, bpm: 0, key: '', introEnd: 0, outroStart: 0, analyzed: false, fileId, unavailable: false};
+    tracks.push(track);
+    console.log('[addFiles] tracks now:', tracks.length);
+    renderPlaylist();                       // 选中即入列，不等元数据，列表立刻显示
+    scheduleSave();
+    const tmp = new Audio();                // 仅后台读取时长，失败也不影响显示
+    pendingAudio.push(tmp);
+    const cleanup = () => { const i = pendingAudio.indexOf(tmp); if(i>=0) pendingAudio.splice(i,1); };
+    tmp.addEventListener('loadedmetadata', () => { track.duration = tmp.duration || 0; renderPlaylist(); scheduleSave(); cleanup(); });
+    tmp.addEventListener('error', () => { feedback(`「${f.name}」无法解码，时长未知`); cleanup(); });
+    tmp.src = url;
+  }
+  feedback(`已添加 ${files.length} 首到播放列表`);
+}
+function renderPlaylist(){
+  if (!listEl){ console.error('[renderPlaylist] listEl NOT FOUND'); return; }
+  console.log('[renderPlaylist] rendering', tracks.length, 'tracks');
+  listEl.innerHTML = '';
+  tracks.forEach((t, i) => {
+    const li = document.createElement('li');
+    if (i === selectedIndex) li.className = 'sel';
+    li.innerHTML = `<span class="tname">${t.name}${t.unavailable?' <span style="color:#E24B4A">⚡缺失</span>':''}</span><span class="tdur">${fmt(t.duration)}</span>
+      <button data-i="${i}" data-deck="a">→A</button>
+      <button data-i="${i}" data-deck="b">→B</button>
+      <button data-i="${i}" class="del-btn" style="background:transparent;border:none;color:var(--mut);font-size:14px;cursor:pointer;padding:0 4px" title="删除">✕</button>`;
+    li.addEventListener('click', e => { if (e.target.tagName === 'BUTTON') return; selectedIndex = i; renderPlaylist(); });
+    listEl.appendChild(li);
+  });
+  listEl.querySelectorAll('button').forEach(b => {
+    if(b.classList.contains('del-btn')){
+      b.addEventListener('click', () => { removeTrack(+b.dataset.i); });
+    } else {
+      b.addEventListener('click', () => loadTrack(+b.dataset.i, b.dataset.deck));
+    }
+  });
+}
+function removeTrack(i){
+  if(i<0||i>=tracks.length) return;
+  const t=tracks[i];
+  if(t.fileId) removeFile(t.fileId);
+  if(t.url && t.url.startsWith('blob:')) URL.revokeObjectURL(t.url);
+  tracks.splice(i,1);
+  if(selectedIndex===i) selectedIndex=null; else if(selectedIndex>i) selectedIndex--;
+  renderPlaylist(); scheduleSave();
+  feedback(`已删除「${t.name}」`);
+}
+function loadTrack(i, deckKey){
+  const t = tracks[i]; if (!t) return;
+  if (t.unavailable){ feedback(`「${t.name}」文件已丢失，请重新添加`); return; }
+  const d = decks[deckKey];
+  d.load(t.url, t.name, i);
+  qs(deckKey + '-name').textContent = t.name;
+  selectedIndex = i; renderPlaylist();
+}
+function onDeckEnded(d){
+  if (d.loadedIndex != null && d.loadedIndex + 1 < tracks.length){
+    loadTrack(d.loadedIndex + 1, d.prefix); d.play();
+  }
+}
+qs('addBtn').addEventListener('click', () => { console.log('[addBtn] clicked, triggering fileInput'); qs('fileInput').click(); });
+qs('fileInput').addEventListener('change', e => { console.log('[fileInput] change, files:', e.target.files.length); addFiles(e.target.files); e.target.value=''; });
+
+/* ---------- 混音导出（MediaRecorder 录主输出） ---------- */
+let mediaRecorder = null, recChunks = [];
+qs('recBtn').addEventListener('click', () => {
+  ensureAudio();
+  if (mediaRecorder && mediaRecorder.state === 'recording'){
+    mediaRecorder.stop();
+  } else {
+    recChunks = [];
+    mediaRecorder = new MediaRecorder(recDest.stream);
+    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) recChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recChunks, {type: 'audio/webm'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'webdj-mix-' + Date.now() + '.webm';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      const btn = qs('recBtn'); btn.textContent = '● 录制'; btn.classList.remove('rec-on');
+      feedback('混音已导出并下载');
+    };
+    mediaRecorder.start();
+    const btn = qs('recBtn'); btn.textContent = '■ 停止'; btn.classList.add('rec-on');
+    feedback('开始录制混音…');
+  }
+});
+
+/* ---------- 智能排序 ---------- */
+function smartOrder(){
+  if(tracks.length<2){ feedback('至少需要 2 首歌曲才能排序'); return; }
+  // sort by BPM ascending (unknown BPM = last)
+  tracks.sort((a,b)=>(a.bpm||999) - (b.bpm||999));
+  selectedIndex = null; renderPlaylist(); scheduleSave();
+  feedback('已按 BPM 升序排列 '+tracks.length+' 首歌曲');
+}
+qs('smartOrderBtn').addEventListener('click', smartOrder);
+
+/* ---------- 切歌辅助 / 调性兼容性 ---------- */
+const KEY_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function keyCompat(ka,kb){
+  if(!ka||!kb) return '';
+  const ia=KEY_NAMES.indexOf(ka), ib=KEY_NAMES.indexOf(kb);
+  if(ia===ib) return 'same';
+  const d=Math.abs(ia-ib);
+  if(d===7||d===5) return 'compatible';
+  if(d===1||d===2) return 'energy';
+  if(d===6) return 'avoid';
+  return 'ok';
+}
+function keyCompatClass(c){ return {'same':'ok','compatible':'ok','energy':'warn','avoid':'bad','ok':'ok'}[c]||'ok'; }
+function keyCompatText(c){ return {'same':'完美','compatible':'五度圈兼容','energy':'升调能量','avoid':'建议避开','ok':'可行'}[c]||''; }
+
+/* ---------- Tap Tempo ---------- */
+const tapTimes={a:[],b:[]};
+function tapBPM(deckKey){
+  const t=performance.now(), arr=tapTimes[deckKey];
+  arr.push(t);
+  if(arr.length>10) arr.shift();
+  if(arr.length>=3){
+    let is=[]; for(let i=1;i<arr.length;i++) is.push(arr[i]-arr[i-1]);
+    const avg=is.reduce((a,b)=>a+b,0)/is.length;
+    if(avg>300) decks[deckKey].bpm=Math.round(60000/avg);
+  }
+  updateAnalysisUI();
+}
+qs('tapA').addEventListener('click',()=>tapBPM('a'));
+qs('tapB').addEventListener('click',()=>tapBPM('b'));
+
+/* ---------- 分析 UI 更新 ---------- */
+function updateAnalysisUI(){
+  const bpmA=deckA.bpm||0, bpmB=deckB.bpm||0;
+  qs('bpm-a').textContent=bpmA||'--'; qs('bpm-b').textContent=bpmB||'--';
+  if(bpmA&&bpmB){
+    const diff=Math.abs(bpmA-bpmB), pct=Math.round(diff/Math.max(bpmA,bpmB)*100);
+    qs('bpm-diff').textContent=diff.toFixed(1)+' BPM ('+pct+'%)';
+    qs('bpm-diff').className=pct<=3?'ok':pct<=8?'warn':'bad';
+  }
+  const ka=deckA.detectedKey,kb=deckB.detectedKey;
+  qs('key-a').textContent=ka||'--'; qs('key-b').textContent=kb||'--';
+  if(ka&&kb){
+    const c=keyCompat(ka,kb);
+    qs('key-compat').textContent=keyCompatText(c);
+    qs('key-compat').className=keyCompatClass(c);
+  }
+  const hintEl=qs('transition-hint');
+  if(!bpmA||!bpmB||!deckA.loaded||!deckB.loaded){
+    hintEl.textContent='载入两首歌曲后自动分析';
+  }else{
+    const dp=Math.abs(bpmA-bpmB)/Math.max(bpmA,bpmB);
+    const kc=ka&&kb?keyCompat(ka,kb):'';
+    if(dp<=0.03&&(kc==='same'||kc==='compatible')){
+      hintEl.innerHTML='<span style="color:#5DCAA5">完美切歌时机 — BPM 高度吻合，调性兼容，直接切入即可</span>';
+    }else if(dp<=0.08){
+      hintEl.innerHTML='<span style="color:#EF9F27">可切歌 — 建议先同步 BPM 再切入，听感更顺滑</span>';
+    }else{
+      hintEl.innerHTML='<span style="color:#E24B4A">BPM 差距较大 — 建议大幅调整调速或选择其他曲目</span>';
+    }
+  }
+}
+
+/* ---------- Auto DJ 模式 ---------- */
+// Auto DJ 状态机：idle → scanning(监听曲末) → ready(对齐BPM/相位) → transitioning(8秒渐变) → 回到 scanning
+let autoDJOn=false, autoDJState='idle', autoDJOut=null, autoDJIn=null;
+let autoDJStart=0, autoDJDuration=8;
+const xfFader=qs('crossfader');
+function toggleAutoDJ(){
+  autoDJOn=!autoDJOn;
+  qs('autoDJToggle').textContent='Auto DJ: '+(autoDJOn?'ON':'OFF');
+  qs('autoDJStatus').textContent=autoDJOn?'等待中':'就绪';
+  qs('autoDJStatus').className='status '+(autoDJOn?'on':'off');
+  if(autoDJOn) autoDJState='scanning';
+  else{ autoDJState='idle'; qs('autoDJTransFill').style.width='0'; }
+}
+qs('autoDJToggle').addEventListener('click',toggleAutoDJ);
+
+function autoDJUpdate(){
+  if(!autoDJOn) return;
+  const now=performance.now();
+  if(autoDJState==='scanning'){
+    let playing=null,idleDeck=null;
+    if(!deckA.audio.paused&&deckA.audio.duration-deckA.audio.currentTime<30) playing=deckA,idleDeck=deckB;
+    if(!deckB.audio.paused&&deckB.audio.duration-deckB.audio.currentTime<30) playing=deckB,idleDeck=deckA;
+    if(playing && idleDeck && autoDJState==='scanning'){
+      autoDJOut=playing; autoDJIn=idleDeck;
+      const ni=autoDJOut.loadedIndex;
+      // find next compatible track (BPM within 8%, or same key)
+      let nextI = ni!=null ? ni+1 : 0;
+      if(nextI >= tracks.length) nextI = 0;
+      const outTrack = ni!=null ? tracks[ni] : null;
+      // try to find best match within next few tracks
+      let bestI = nextI, bestScore = -1;
+      for(let i=nextI; i<Math.min(nextI+5, tracks.length); i++){
+        if(i===ni) continue;
+        const t = tracks[i];
+        if(outTrack && outTrack.bpm && t.bpm){
+          const diff = Math.abs(outTrack.bpm - t.bpm) / outTrack.bpm;
+          const score = (diff<0.03?3:(diff<0.08?1:0)) + (outTrack.key&&t.key&&keyCompat(outTrack.key,t.key)==='same'?2:0);
+          if(score > bestScore){ bestScore = score; bestI = i; }
+        }
+      }
+      loadTrack(bestI, autoDJIn.prefix);
+      autoDJIn.setRate(autoDJOut.rate);
+      if(pitchCtrl[autoDJIn.prefix]) pitchCtrl[autoDJIn.prefix].set(autoDJOut.rate);
+      autoDJState='ready';
+      qs('autoDJStatus').textContent='准备切入';
+      qs('autoDJStatus').className='status trans';
+      qs('autoDJNext').textContent=tracks[bestI].name;
+      // start cueing: pre-listen the next deck
+      autoDJIn.setCue(true);
+    }
+  }
+  if(autoDJState==='ready'){
+    const outTrack = autoDJOut.loadedIndex!=null ? tracks[autoDJOut.loadedIndex] : null;
+    const rem = autoDJOut.audio.duration - autoDJOut.audio.currentTime;
+    // use pre-analyzed outro start if available
+    const outroStart = (outTrack && outTrack.outroStart > 0) ? outTrack.outroStart : autoDJOut.audio.duration - 20;
+    if(autoDJIn.bpm&&autoDJOut.bpm){
+      const adjRate = autoDJOut.rate * autoDJOut.bpm / autoDJIn.bpm;
+      autoDJIn.setRate(Math.max(0.5, Math.min(1.5, adjRate)));
+      if(pitchCtrl[autoDJIn.prefix]) pitchCtrl[autoDJIn.prefix].set(autoDJIn.rate);
+    }
+    // trigger transition at outro start or remaining time
+    const triggerAt = Math.max(outroStart - 2, autoDJOut.audio.duration - autoDJDuration - 2);
+    if(autoDJOut.audio.currentTime >= triggerAt || rem <= autoDJDuration + 2){
+      autoDJState='transitioning'; autoDJStart = performance.now();
+      qs('autoDJStatus').textContent='过渡中';
+      autoDJIn.setCue(false); autoDJIn.play();
+      qs('autoDJTransFill').style.transition='none';
+      // enable reverb wet
+      if(reverbWet) reverbWet.gain.value = 0.5;
+    }
+  }
+  if(autoDJState==='transitioning'){
+    const prog = Math.min((now - autoDJStart)/1000/autoDJDuration, 1);
+    qs('autoDJTransFill').style.width = (prog*100)+'%';
+    const p = prog;
+    // crossfade
+    autoDJOut.setCross(Math.cos(p*Math.PI/2));
+    autoDJIn.setCross(Math.sin(p*Math.PI/2));
+    // EQ: outgoing bass -> 0, incoming bass -> full; mid/high on outgoing slightly reduced
+    autoDJOut.setEQ('low', Math.max(-26, -26*p*1.3));
+    autoDJIn.setEQ('low', Math.max(-26, -26*(1-p)));
+    autoDJIn.setEQ('mid', Math.max(-12, -12*(1-p)));
+    autoDJOut.setEQ('high', Math.max(-18, -18*p*p));
+    // reverb: outgoing track gets more reverb as it fades (washout)
+    if(reverbWet){
+      autoDJOut.setReverb(Math.min(0.7, p * 0.8));
+      autoDJIn.setReverb(Math.max(0, 0.3 * (1-p)));
+      reverbWet.gain.value = 0.5 * (1 - Math.pow(1-p, 3));
+    }
+    if(p >= 1){
+      autoDJOut.pause(); autoDJOut.setEQ('low',0); autoDJOut.setEQ('mid',0); autoDJOut.setEQ('high',0);
+      autoDJOut.setReverb(0);
+      autoDJIn.setEQ('low',0); autoDJIn.setEQ('mid',0); autoDJIn.setReverb(0);
+      autoDJOut.setCross(0); autoDJIn.setCross(1);
+      if(reverbWet) reverbWet.gain.value = 0;
+      autoDJState='scanning';
+      qs('autoDJStatus').textContent='等待中';
+      qs('autoDJStatus').className='status on';
+      qs('autoDJTransFill').style.width='0';
+      qs('autoDJNext').textContent='--';
+      autoDJOut=null; autoDJIn=null;
+    }
+  }
+}
+
+/* ---------- 快捷键绑定 ---------- */
+let activeDeck='a';
+const keyMap={
+  '1':()=>deckA.toggle(), '2':()=>deckB.toggle(),
+  'q':()=>{if(selectedIndex!=null)loadTrack(selectedIndex,'a');},
+  'w':()=>{if(selectedIndex!=null)loadTrack(selectedIndex,'b');},
+  'a':()=>{deckA.setCue(!deckA.cueOn);},
+  'b':()=>{deckB.setCue(!deckB.cueOn);},
+  's':()=>{
+    const src=deckA.audio.paused?deckB:deckA;
+    const dst=src===deckA?deckB:deckA;
+    syncBPM(dst, src);
+  },
+  'ArrowLeft':()=>{const d=decks[activeDeck];d.setRate(Math.max(0.5,d.rate-0.02));if(pitchCtrl[d.prefix])pitchCtrl[d.prefix].set(d.rate);},
+  'ArrowRight':()=>{const d=decks[activeDeck];d.setRate(Math.min(1.5,d.rate+0.02));if(pitchCtrl[d.prefix])pitchCtrl[d.prefix].set(d.rate);},
+  'ArrowUp':()=>{ crossCtrl.set(Math.max(0, crossCtrl.get()-0.05)); },   // 交叉推子左移 5%
+  'ArrowDown':()=>{ crossCtrl.set(Math.min(1, crossCtrl.get()+0.05)); }, // 交叉推子右移 5%
+  'Tab':(e)=>{e.preventDefault();const to=deckA.crossGain.gain.value>deckB.crossGain.gain.value?0:1;deckA.setCross(Math.cos(to*Math.PI/2));deckB.setCross(Math.sin(to*Math.PI/2));},
+  'f':()=>{autoDJDuration=8;autoDJOut=deckA;autoDJIn=deckB;autoDJStart=performance.now();autoDJState='transitioning';autoDJIn.play();feedback('手动渐变过渡 8s');},
+  't':()=>toggleAutoDJ(),
+  '?':()=>{const el=qs('shortcuts');el.style.display=el.style.display==='none'?'flex':'none';},
+  'd':()=>{activeDeck=activeDeck==='a'?'b':'a';feedback('当前操作 Deck: '+activeDeck.toUpperCase());},
+};
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT')return;
+  if(keyMap[e.key]){e.preventDefault();keyMap[e.key](e);}
+});
+qs('shortcutsClose').addEventListener('click',()=>{qs('shortcuts').style.display='none';});
+
+/* ---------- 辅助面板：BPM/调性/拍点可视化更新 ---------- */
+let _keyTimer=0;
+function updateAssist(){
+  const now=performance.now();
+  ['a','b'].forEach(p=>{
+    const d=decks[p];
+    const cur=d.audio.currentTime||0;
+    d.detectBeat(now);
+    if(d.loaded&&now-_keyTimer>2000){d.estimateKey();_keyTimer=now;}
+    if(d.bpm){
+      const ph=d.getBeatPhase(cur);
+      const dot=qs('beat-'+p);
+      if(dot){dot.className='beat-dot'+(ph<0.15||ph>0.85?' on':'')+(p==='b'?' b':'');}
+    }
+    // energy sampling for intro/outro analysis (every 0.5s)
+    if(!d.audio.paused && d.audio.duration && now - d._energySampleTime > 500){
+      d._energySampleTime = now;
+      const rms = d.getLowEnergy ? d.getLowEnergy() : 0;
+      d.energySamples.push({t: cur, e: rms});
+      if(d.energySamples.length > 600) d.energySamples.shift(); // cap at ~5 min
+    }
+    // store analysis results back to track metadata
+    const ti = d.loadedIndex;
+    if(ti != null && ti < tracks.length && d.bpm > 0 && d.detectedKey){
+      const t = tracks[ti];
+      if(!t.analyzed || t.bpm !== d.bpm || t.key !== d.detectedKey){
+        t.bpm = d.bpm; t.key = d.detectedKey;
+        if(d.energySamples.length > 10){
+          const peaks = d.energySamples.map(s=>s.e).sort((a,b)=>b-a);
+          const peakE = peaks[0]||0.01;
+          const threshold = peakE * 0.15;
+          // intro: find first sustained energy above threshold
+          let introEnd = 5;
+          for(let i=0;i<d.energySamples.length-3;i++){
+            if(d.energySamples[i].e>threshold && d.energySamples[i+1].e>threshold && d.energySamples[i+2].e>threshold){
+              introEnd = d.energySamples[i].t; break;
+            }
+          }
+          t.introEnd = Math.min(introEnd, d.audio.duration*0.3);
+          // outro: energy below threshold near end
+          let outroStart = d.audio.duration - 5;
+          for(let i=d.energySamples.length-1;i>=3;i--){
+            if(d.energySamples[i].e<threshold && d.energySamples[i-1].e<threshold && d.energySamples[i-2].e<threshold){
+              outroStart = d.energySamples[i].t; break;
+            }
+          }
+          t.outroStart = Math.max(outroStart, d.audio.duration*0.6);
+          t.analyzed = true;
+          scheduleSave();          // 分析完成后持久化 BPM/key/intro/outro
+        }
+      }
+    }
+  });
+  updateAnalysisUI();
+}
+
+/* ---------- 时钟：进度 / 转盘旋转 ---------- */
+function fmt(s){ if (!isFinite(s)) return '0:00'; const m=Math.floor(s/60), ss=Math.floor(s%60); return m + ':' + String(ss).padStart(2,'0'); }
+function tick(){
+  ['a','b'].forEach(prefix => {
+    const d = decks[prefix], a = d.audio;
+    const cur = a.currentTime || 0, dur = a.duration || 0;
+    qs(prefix + '-fill').style.width = (dur ? cur/dur*100 : 0) + '%';
+    qs(prefix + '-cur').textContent = fmt(cur);
+    qs(prefix + '-dur').textContent = dur ? fmt(dur) : '0:00';
+    const ring = qs(prefix + '-ring');
+    ring.style.background = `conic-gradient(var(--accent) ${dur ? cur/dur*360 : 0}deg, rgba(255,255,255,0.06) 0deg)`;
+    const now = performance.now();
+    if (!a.paused){ const dt = (now - d._last)/1000; d.rotation += dt*120*d.rate; }
+    d._last = now;
+    qs(prefix + '-jog').style.transform = `rotate(${d.rotation}deg)`;
+    const head = qs(prefix + '-wavehead');
+    if(head) head.style.left = (dur ? cur/dur*100 : 0) + '%';
+  });
+  autoDJUpdate();
+  updateAssist();
+  requestAnimationFrame(tick);
+}
+tick();
+restorePlaylist();
+/* 窗口尺寸变化时重绘波形（canvas 像素需按新宽度重算） */
+window.addEventListener('resize', () => { deckA.drawWave(); deckB.drawWave(); });
+</script>
+</body>
+</html>

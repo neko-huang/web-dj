@@ -1,0 +1,9 @@
+# 临时校验脚本（本地语法检查用，不入库）
+_check.js
+
+# 导出的混音文件（本地产物，不入库；音频走 IndexedDB 持久化）
+*.webm
+
+# 系统文件
+.DS_Store
+Thumbs.db
