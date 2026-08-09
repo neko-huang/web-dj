@@ -799,8 +799,41 @@ function toggleAutoDJ(){
 qs('autoDJToggle').addEventListener('click',toggleAutoDJ);
 
 function autoDJUpdate(){
-  if(!autoDJOn) return;
   const now=performance.now();
+  // 过渡执行：手动 F 渐变不依赖 Auto DJ 开关，必须无条件执行
+  if(autoDJState==='transitioning'){
+    const prog = Math.min((now - autoDJStart)/1000/autoDJDuration, 1);
+    qs('autoDJTransFill').style.width = (prog*100)+'%';
+    const p = prog;
+    autoDJOut.setCross(Math.cos(p*Math.PI/2));
+    autoDJIn.setCross(Math.sin(p*Math.PI/2));
+    autoDJOut.setEQ('low', Math.max(-26, -26*p*1.3));
+    autoDJIn.setEQ('low', Math.max(-26, -26*(1-p)));
+    autoDJIn.setEQ('mid', Math.max(-12, -12*(1-p)));
+    autoDJOut.setEQ('high', Math.max(-18, -18*p*p));
+    if(reverbWet){
+      autoDJOut.setReverb(Math.min(0.7, p * 0.8));
+      autoDJIn.setReverb(Math.max(0, 0.3 * (1-p)));
+      reverbWet.gain.value = 0.5 * (1 - Math.pow(1-p, 3));
+    }
+    if(p >= 1){
+      autoDJOut.pause(); autoDJOut.setEQ('low',0); autoDJOut.setEQ('mid',0); autoDJOut.setEQ('high',0);
+      autoDJOut.setReverb(0);
+      autoDJIn.setEQ('low',0); autoDJIn.setEQ('mid',0); autoDJIn.setReverb(0);
+      autoDJOut.setCross(0); autoDJIn.setCross(1);
+      if(reverbWet) reverbWet.gain.value = 0;
+      autoDJState='scanning';
+      qs('autoDJStatus').textContent='等待中';
+      qs('autoDJStatus').className='status on';
+      qs('autoDJTransFill').style.width='0';
+      qs('autoDJNext').textContent='--';
+      autoDJOut=null; autoDJIn=null;
+      // 同步交叉推子：让推子视觉与增益一致，避免方向键随后跳变
+      crossCtrl.set(1);
+    }
+    if(!autoDJOn) return;
+  }
+  if(!autoDJOn) return;
   if(autoDJState==='scanning'){
     let playing=null,idleDeck=null;
     if(!deckA.audio.paused&&deckA.audio.duration-deckA.audio.currentTime<30) playing=deckA,idleDeck=deckB;
@@ -855,38 +888,6 @@ function autoDJUpdate(){
       if(reverbWet) reverbWet.gain.value = 0.5;
     }
   }
-  if(autoDJState==='transitioning'){
-    const prog = Math.min((now - autoDJStart)/1000/autoDJDuration, 1);
-    qs('autoDJTransFill').style.width = (prog*100)+'%';
-    const p = prog;
-    // crossfade
-    autoDJOut.setCross(Math.cos(p*Math.PI/2));
-    autoDJIn.setCross(Math.sin(p*Math.PI/2));
-    // EQ: outgoing bass -> 0, incoming bass -> full; mid/high on outgoing slightly reduced
-    autoDJOut.setEQ('low', Math.max(-26, -26*p*1.3));
-    autoDJIn.setEQ('low', Math.max(-26, -26*(1-p)));
-    autoDJIn.setEQ('mid', Math.max(-12, -12*(1-p)));
-    autoDJOut.setEQ('high', Math.max(-18, -18*p*p));
-    // reverb: outgoing track gets more reverb as it fades (washout)
-    if(reverbWet){
-      autoDJOut.setReverb(Math.min(0.7, p * 0.8));
-      autoDJIn.setReverb(Math.max(0, 0.3 * (1-p)));
-      reverbWet.gain.value = 0.5 * (1 - Math.pow(1-p, 3));
-    }
-    if(p >= 1){
-      autoDJOut.pause(); autoDJOut.setEQ('low',0); autoDJOut.setEQ('mid',0); autoDJOut.setEQ('high',0);
-      autoDJOut.setReverb(0);
-      autoDJIn.setEQ('low',0); autoDJIn.setEQ('mid',0); autoDJIn.setReverb(0);
-      autoDJOut.setCross(0); autoDJIn.setCross(1);
-      if(reverbWet) reverbWet.gain.value = 0;
-      autoDJState='scanning';
-      qs('autoDJStatus').textContent='等待中';
-      qs('autoDJStatus').className='status on';
-      qs('autoDJTransFill').style.width='0';
-      qs('autoDJNext').textContent='--';
-      autoDJOut=null; autoDJIn=null;
-    }
-  }
 }
 
 /* ---------- 快捷键绑定 ---------- */
@@ -906,8 +907,8 @@ const keyMap={
   'ArrowRight':()=>{const d=decks[activeDeck];d.setRate(Math.min(1.5,d.rate+0.02));if(pitchCtrl[d.prefix])pitchCtrl[d.prefix].set(d.rate);},
   'ArrowUp':()=>{ crossCtrl.set(Math.max(0, crossCtrl.get()-0.05)); },   // 交叉推子左移 5%
   'ArrowDown':()=>{ crossCtrl.set(Math.min(1, crossCtrl.get()+0.05)); }, // 交叉推子右移 5%
-  'Tab':(e)=>{e.preventDefault();const to=deckA.crossGain.gain.value>deckB.crossGain.gain.value?0:1;deckA.setCross(Math.cos(to*Math.PI/2));deckB.setCross(Math.sin(to*Math.PI/2));},
-  'f':()=>{autoDJDuration=8;autoDJOut=deckA;autoDJIn=deckB;autoDJStart=performance.now();autoDJState='transitioning';autoDJIn.play();feedback('手动渐变过渡 8s');},
+  'Tab':(e)=>{e.preventDefault();const to=deckA.crossGain.gain.value>deckB.crossGain.gain.value?0:1;crossCtrl.set(to);},
+  'f':()=>{autoDJDuration=8;autoDJOut=deckA;autoDJIn=deckB;autoDJStart=performance.now();autoDJState='transitioning';autoDJIn.setCue(false);autoDJIn.play();feedback('手动渐变过渡 8s');},
   't':()=>toggleAutoDJ(),
   '?':()=>{const el=qs('shortcuts');el.style.display=el.style.display==='none'?'flex':'none';},
   'd':()=>{activeDeck=activeDeck==='a'?'b':'a';feedback('当前操作 Deck: '+activeDeck.toUpperCase());},
