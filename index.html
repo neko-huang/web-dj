@@ -375,8 +375,9 @@ class Deck {
   }
   load(url, name, index){
     this.ensureGraph();
-    // 换歌时释放上一首的 blob URL，避免 Object URL 泄漏
-    if (this.audio.src && this.audio.src.startsWith('blob:')) URL.revokeObjectURL(this.audio.src);
+    // 注意：不要在此 revoke blob URL —— 它属于 tracks[i].url（播放列表共享），
+    // revoke 会让列表里该曲无法再次载入，并可能掐断另一唱盘正在播放的同曲。
+    // 资源生命周期由 addFiles / removeTrack 统一管理。
     this.audio.src = url; this.name = name; this.loadedIndex = index; this.loaded = true;
     // 重置本路分析状态与波形，准备分析新歌
     this.bpm = 0; this.detectedKey=''; this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
