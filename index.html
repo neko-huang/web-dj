@@ -336,28 +336,53 @@ function scheduleSave(){
 class Deck {
   constructor(prefix){
     this.prefix = prefix;
-    this.audio = new Audio();
-    this.audio.preload = 'metadata';
-    this.audio.preservesPitch = true;        // 变速不变调，Chrome 原生时间伸缩
+    // —— v2 播放引擎状态（AudioBuffer 方案，取代 <audio>）——
+    this.buffer = null;            // 解码后的 AudioBuffer
+    this.srcNode = null;           // 当前 AudioBufferSourceNode（一次性，播放时重建）
+    this._startedAt = 0;           // AC.currentTime：本次播放起点
+    this._startOffset = 0;         // 缓冲内起点位置（秒）
+    this._pausedAt = 0;            // 暂停时的播放位置（秒）
+    this._rate = 1;                // 当前播放速率（搓碟时为瞬时速率）
+    this.isPlaying = false;
+    this.scratching = false;
+    this._scratchPos = 0;          // 搓碟时的目标位置
+    this._onEnded = null;          // 'ended' 事件回调（onDeckEnded）
+    this._readyPromise = null;     // 解码完成 promise（play 前等待）
     this.graphReady = false;
     this.rate = 1; this.rotation = 0; this.cueOn = false;
-    this.eq = {}; this.source = null;
-    this.loaded = false; this.name = ''; this.loadedIndex = null;
+    this.eq = {}; this.source = null; this.analyser = null;
+    this.loaded = false; this.name = ''; this.loadedIndex = null; this.url = '';
     this._last = performance.now();
     this.bpm = 0; this.detectedKey = ''; this._fluxHist = []; this.beatTimes = [];
     this._prevLow = 0; this._lastBeat = 0; this._lastAnalysis = 0; this._keyTimer = 0;
-    this.energySamples = []; this._energySampleTime = 0;
+    this.energySamples = []; this._energySampleTime = 0; this.peaks = null;
+    // 门面对象：把其余 30+ 处 d.audio.x 调用代理到新引擎，避免大面积改动
+    const self = this;
+    this.audio = {
+      get currentTime(){ return self.position(); },
+      set currentTime(v){ self.seek(v); },
+      get duration(){ return self.buffer ? self.buffer.duration : 0; },
+      get paused(){ return !self.isPlaying; },
+      set playbackRate(r){ self.setRate(r); },
+      get playbackRate(){ return self.rate; },
+      set src(_u){ /* load() 负责解码，这里忽略赋值 */ },
+      get src(){ return self.url; },
+      play(){ return self.play(); },
+      pause(){ return self.pause(); },
+      addEventListener(type, cb){ if (type === 'ended') self._onEnded = cb; },
+      preload: 'metadata', preservesPitch: true,
+    };
+    this.audio.addEventListener('ended', () => onDeckEnded(this));
   }
   ensureGraph(){
     if (this.graphReady) return;
     ensureAudio();
-    // 音频图（信号流）：
-    // source → [low shelf → mid peaking → high shelf] EQ → channelGain → crossGain → masterBus(扬声器)
-    //                                              └→ channelGain → cueGain → cueBus(监听)
-    //                                              └→ channelGain → reverbSend → 全局混响 → masterBus
-    this.source = AC.createMediaElementSource(this.audio);
+    // 信号流（与旧版一致，只是音源改为每次播放新建的 AudioBufferSourceNode）：
+    // source → analyser
+    // source → [low → mid → high] EQ → channelGain → crossGain → masterBus(扬声器)
+    //                                      └→ cueGain → cueBus(监听)
+    //                                      └→ reverbSend → 全局混响 → masterBus
     this.analyser = AC.createAnalyser(); this.analyser.fftSize = 2048;
-    this.source.connect(this.analyser);
     const low  = AC.createBiquadFilter(); low.type='lowshelf';  low.frequency.value=320;
     const mid  = AC.createBiquadFilter(); mid.type='peaking';   mid.frequency.value=1000; mid.Q.value=0.9;
     const high = AC.createBiquadFilter(); high.type='highshelf'; high.frequency.value=3200;
@@ -365,33 +390,130 @@ class Deck {
     this.channelGain = AC.createGain(); this.channelGain.gain.value = 1;
     this.crossGain   = AC.createGain(); this.crossGain.gain.value   = 0.707;
     this.cueGain     = AC.createGain(); this.cueGain.gain.value     = 0;
-    this.source.connect(low); low.connect(mid); mid.connect(high); high.connect(this.channelGain);
+    low.connect(mid); mid.connect(high); high.connect(this.channelGain);
     this.channelGain.connect(this.crossGain); this.crossGain.connect(masterBus);
     this.channelGain.connect(this.cueGain);   this.cueGain.connect(cueBus);
     this.reverbSend = AC.createGain(); this.reverbSend.gain.value = 0;
     this.channelGain.connect(this.reverbSend); this.reverbSend.connect(reverbNode);
     this.graphReady = true;
-    this.audio.addEventListener('ended', () => onDeckEnded(this));
+    // 注意：source 在每次 _start() / scratchTo() 时新建并接到 analyser 与 EQ
   }
   load(url, name, index){
     this.ensureGraph();
+    // 换歌前先停掉当前正在播放的 source（一次性节点，必须显式 stop），并复位播放位置
+    if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
+    this.isPlaying = false; this.scratching = false; this._pausedAt = 0;
     // 注意：不要在此 revoke blob URL —— 它属于 tracks[i].url（播放列表共享），
     // revoke 会让列表里该曲无法再次载入，并可能掐断另一唱盘正在播放的同曲。
     // 资源生命周期由 addFiles / removeTrack 统一管理。
-    this.audio.src = url; this.name = name; this.loadedIndex = index; this.loaded = true;
+    this.url = url; this.name = name; this.loadedIndex = index;
     // 重置本路分析状态与波形，准备分析新歌
     this.bpm = 0; this.detectedKey=''; this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
     this.energySamples = []; this.peaks = null;
-    this.loadWaveform(url);
+    this.loaded = false;
+    this._readyPromise = this._decode(url);     // 异步解码；play() 会 await 它
+  }
+  async _decode(url){
+    if (!url || !url.startsWith('blob:')){ feedback('仅支持本地 / Blob 音源'); return; }
+    ensureAudio();
+    try{
+      const ab = await fetch(url).then(r => r.arrayBuffer());
+      this.buffer = await AC.decodeAudioData(ab);
+      this._computePeaks();
+      this.loaded = true;
+      this.drawWave();
+    }catch(e){
+      console.warn('decode failed', e);
+      feedback(`「${this.name}」解码失败：${e.message || e}`);
+    }
+  }
+  _computePeaks(){
+    const data = this.buffer.getChannelData(0);          // 取左声道
+    const N = 800, step = Math.floor(data.length / N) || 1;
+    const peaks = new Float32Array(N);
+    for(let i=0;i<N;i++){
+      let max = 0; const s = i*step;
+      for(let j=0;j<step;j++){ const v = Math.abs(data[s+j]||0); if(v>max) max = v; }
+      peaks[i] = max;
+    }
+    this.peaks = peaks;
   }
   async play(){
     this.ensureGraph();
     if (AC.state === 'suspended') await AC.resume();
-    await this.audio.play();
+    try { if (this._readyPromise) await this._readyPromise; } catch(e){}
+    if (!this.buffer) return;
+    if (this._pausedAt >= this.buffer.duration - 0.03) this._pausedAt = 0;  // 播完后从头开始
+    this.scratching = false;
+    this._start(this._pausedAt, this.rate);
   }
-  pause(){ this.audio.pause(); }
+  pause(){
+    if (!this.isPlaying) return;
+    this._pausedAt = this.position();
+    if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
+    this.isPlaying = false; this.scratching = false;
+  }
   toggle(){ this.audio.paused ? this.play() : this.pause(); }
-  setRate(r){ this.rate = r; this.audio.playbackRate = r; }
+  // 当前播放位置（秒）：手算，不依赖 <audio>
+  position(){
+    if (!AC) return 0;
+    if (this.scratching) return Math.max(0, this._scratchPos);
+    if (!this.isPlaying) return this._pausedAt;
+    const pos = this._startOffset + (AC.currentTime - this._startedAt) * this._rate;
+    return Math.max(0, pos);
+  }
+  // 新建一个 AudioBufferSourceNode 并从 offset 以 rate 播放（source 是一次性的，必须重建）
+  _start(offset, rate){
+    if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
+    const s = AC.createBufferSource();
+    s.buffer = this.buffer;
+    s.playbackRate.value = rate;
+    s.connect(this.analyser);     // 接到分析器（供 BPM / 调性检测）
+    s.connect(this.eq.low);       // 接到 EQ 链
+    this.srcNode = s;
+    this._startOffset = Math.max(0, offset);
+    this._startedAt = AC.currentTime;
+    this._rate = rate;
+    s.start(0, this._startOffset);
+    this.isPlaying = true;
+  }
+  seek(pos){
+    if (!this.buffer) return;
+    pos = Math.max(0, Math.min(this.buffer.duration, pos));
+    if (this.isPlaying && !this.scratching) this._start(pos, this._rate);
+    else this._pausedAt = pos;
+  }
+  setRate(r){
+    this.rate = r;
+    // 播放中且非搓碟：实时改 playbackRate（AudioParam），并重新对齐位置基准，避免爆音
+    if (this.isPlaying && !this.scratching && this.srcNode){
+      const pos = this.position();
+      this.srcNode.playbackRate.setValueAtTime(r, AC.currentTime);
+      this._startOffset = pos; this._startedAt = AC.currentTime; this._rate = r;
+    }
+  }
+  // —— 真·搓碟：拖动 jog 时以瞬时速率播放，可正向 / 反向，松手恢复 ——
+  scratchTo(pos, vel){
+    if (!this.buffer) return;
+    this.scratching = true;
+    pos = Math.max(0, Math.min(this.buffer.duration, pos));
+    this._scratchPos = pos;
+    const rate = Math.max(-8, Math.min(8, vel));   // 限制速率，避免极端爆音
+    if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
+    const s = AC.createBufferSource();
+    s.buffer = this.buffer;
+    s.playbackRate.value = rate;
+    s.connect(this.analyser); s.connect(this.eq.low);
+    this.srcNode = s;
+    this._startOffset = pos; this._startedAt = AC.currentTime; this._rate = rate;
+    s.start(0, pos);
+    this.isPlaying = true;
+  }
+  endScratch(){
+    if (!this.scratching) return;
+    this.scratching = false;
+    this._start(this._scratchPos, this.rate);   // 从搓碟位置以正常速率继续
+  }
   setEQ(band, db){ if (this.eq && this.eq[band]) this.eq[band].gain.value = db; }
   setChannel(g){ if (this.channelGain) this.channelGain.gain.value = g; }
   setCross(g){ if (this.crossGain) this.crossGain.gain.value = g; }
@@ -468,25 +590,6 @@ class Deck {
     for (let i=0;i<12;i++){ if(chroma[i]>mx){mx=chroma[i];mi=i;} }
     this.detectedKey = names[mi];
     return this.detectedKey;
-  }
-  /* 解码音频并预计算波形峰值，绘制到唱盘下方 canvas */
-  loadWaveform(url){
-    if(!url || !url.startsWith('blob:')) return;
-    ensureAudio();
-    fetch(url).then(r => r.arrayBuffer())
-      .then(ab => AC.decodeAudioData(ab))
-      .then(buf => {
-        const data = buf.getChannelData(0);          // 取左声道
-        const N = 800, step = Math.floor(data.length / N) || 1;
-        const peaks = new Float32Array(N);
-        for(let i=0;i<N;i++){
-          let max = 0; const s = i*step;
-          for(let j=0;j<step;j++){ const v = Math.abs(data[s+j]||0); if(v>max) max = v; }
-          peaks[i] = max;
-        }
-        this.peaks = peaks; this.drawWave();
-      })
-      .catch(e => console.warn('waveform decode failed', e));
   }
   drawWave(){
     const cv = qs(this.prefix + '-wave'); if(!cv || !this.peaks) return;
@@ -979,6 +1082,11 @@ function fmt(s){ if (!isFinite(s)) return '0:00'; const m=Math.floor(s/60), ss=M
 function tick(){
   ['a','b'].forEach(prefix => {
     const d = decks[prefix], a = d.audio;
+    // 自然播放到末尾：触发 ended，由 onDeckEnded 续播下一首
+    if (d.isPlaying && d.buffer && d.position() >= d.buffer.duration - 0.03){
+      d.isPlaying = false; d._pausedAt = d.buffer.duration;
+      if (d._onEnded) d._onEnded();
+    }
     const cur = a.currentTime || 0, dur = a.duration || 0;
     qs(prefix + '-fill').style.width = (dur ? cur/dur*100 : 0) + '%';
     qs(prefix + '-cur').textContent = fmt(cur);
@@ -986,7 +1094,8 @@ function tick(){
     const ring = qs(prefix + '-ring');
     ring.style.background = `conic-gradient(var(--accent) ${dur ? cur/dur*360 : 0}deg, rgba(255,255,255,0.06) 0deg)`;
     const now = performance.now();
-    if (!a.paused){ const dt = (now - d._last)/1000; d.rotation += dt*120*d.rate; }
+    const rotRate = d.scratching ? d._rate : d.rate;   // 搓碟时转盘跟随瞬时速率旋转
+    if (!a.paused){ const dt = (now - d._last)/1000; d.rotation += dt*120*rotRate; }
     d._last = now;
     qs(prefix + '-jog').style.transform = `rotate(${d.rotation}deg)`;
     const head = qs(prefix + '-wavehead');
