@@ -345,7 +345,7 @@ class Deck {
     this.loaded = false; this.name = ''; this.loadedIndex = null;
     this._last = performance.now();
     this.bpm = 0; this.detectedKey = ''; this._fluxHist = []; this.beatTimes = [];
-    this._prevLow = 0; this._lastBeat = 0; this._lastAnalysis = 0;
+    this._prevLow = 0; this._lastBeat = 0; this._lastAnalysis = 0; this._keyTimer = 0;
     this.energySamples = []; this._energySampleTime = 0;
   }
   ensureGraph(){
@@ -918,14 +918,13 @@ document.addEventListener('keydown',e=>{
 qs('shortcutsClose').addEventListener('click',()=>{qs('shortcuts').style.display='none';});
 
 /* ---------- 辅助面板：BPM/调性/拍点可视化更新 ---------- */
-let _keyTimer=0;
 function updateAssist(){
   const now=performance.now();
   ['a','b'].forEach(p=>{
     const d=decks[p];
     const cur=d.audio.currentTime||0;
     d.detectBeat(now);
-    if(d.loaded&&now-_keyTimer>2000){d.estimateKey();_keyTimer=now;}
+    if(d.loaded&&now-d._keyTimer>2000){d.estimateKey();d._keyTimer=now;}
     if(d.bpm){
       const ph=d.getBeatPhase(cur);
       const dot=qs('beat-'+p);
