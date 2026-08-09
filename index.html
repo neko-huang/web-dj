@@ -407,7 +407,7 @@ class Deck {
     // 频谱通量法：只关注低频(底鼓)帧间能量的"突然增大"作为拍点 onset，
     // 用滑动窗口自适应阈值过滤持续轰鸣，再用拍点间隔直方图选出最稳定的 BPM。
     if (!this.audio.duration || this.audio.paused) return false;
-    if (now - this._lastAnalysis < 0.03) return false;   // 节流到约 30fps，省 CPU
+    if (now - this._lastAnalysis < 30) return false;   // 节流到约 30fps（performance.now() 为毫秒），省 CPU
     this._lastAnalysis = now;
     const energy = this.getLowEnergy();
     const flux = Math.max(0, energy - this._prevLow);
@@ -416,7 +416,7 @@ class Deck {
     if (this._fluxHist.length > 50) this._fluxHist.shift();
     const avgFlux = this._fluxHist.reduce((a,b)=>a+b,0)/this._fluxHist.length;
     const threshold = avgFlux * 2.2;
-    if (flux > Math.max(threshold, 0.01) && now - this._lastBeat > 0.22){
+    if (flux > Math.max(threshold, 0.01) && now - this._lastBeat > 220){
       this._lastBeat = now;
       this.beatTimes.push(performance.now());
       if (this.beatTimes.length > 40) this.beatTimes.shift();
