@@ -692,10 +692,23 @@ const pitchCtrl = {a:null, b:null};
   makeFader(sec.querySelector('.chan'), {min:0, max:1, value:1, vertical:true, onChange:v => d.setChannel(v)});
 
   const jog = sec.querySelector('.jog');
-  let js, jc, jactive=false;
-  jog.addEventListener('pointerdown', e => { jactive=true; js=e.clientY; jc=d.audio.currentTime; jog.setPointerCapture(e.pointerId); });
-  jog.addEventListener('pointermove', e => { if(!jactive) return; const dur=d.audio.duration||1; d.audio.currentTime = Math.max(0, Math.min(dur, jc + (js - e.clientY)*0.5)); });
-  jog.addEventListener('pointerup', () => { jactive=false; });
+  let js, jcuePos, jlastPos, jlastT, jactive=false;
+  const JOG_PX_TO_SEC = 0.01;   // 每像素拖拽 = 0.01 秒音频（黑胶拟真灵敏度）
+  jog.addEventListener('pointerdown', e => {
+    jactive=true; jcuePos = d.position(); jlastPos = jcuePos;
+    js = e.clientY; jlastT = performance.now();
+    jog.setPointerCapture(e.pointerId);
+  });
+  jog.addEventListener('pointermove', e => {
+    if(!jactive) return;
+    const newPos = jcuePos + (js - e.clientY) * JOG_PX_TO_SEC;   // 向上拖 = 前进
+    const now = performance.now();
+    const dt = (now - jlastT) / 1000;
+    const vel = dt > 0 ? (newPos - jlastPos) / dt : 0;            // 拖动速度 = 播放速率（可负=倒放）
+    d.scratchTo(newPos, vel);
+    jlastPos = newPos; jlastT = now;
+  });
+  jog.addEventListener('pointerup', () => { jactive=false; d.endScratch(); });
 
   const bar = sec.querySelector('.bar');
   bar.addEventListener('click', e => { const r=bar.getBoundingClientRect(); const f=(e.clientX-r.left)/r.width; if(d.audio.duration) d.audio.currentTime=f*d.audio.duration; });
