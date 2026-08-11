@@ -115,6 +115,18 @@
   .auto-dj-bar button{padding:5px 12px;font-size:12px;border-radius:6px;border:1px solid var(--line);
     background:var(--panel2);color:var(--txt);cursor:pointer;}
   .auto-dj-bar button:hover{border-color:var(--accentA);}
+  /* ---------- 首次引导 ---------- */
+  .onboard{position:fixed;inset:0;background:rgba(0,0,0,0.86);z-index:120;display:flex;
+    align-items:center;justify-content:center;}
+  .onboard-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:24px 28px;max-width:440px;}
+  .onboard-card h2{margin:0 0 14px;font-size:18px;}
+  .onboard-steps{margin:0;padding-left:20px;line-height:1.9;font-size:13px;color:var(--txt);}
+  .onboard-steps b{color:var(--accentA);}
+  .coach-layer{position:fixed;inset:0;z-index:110;pointer-events:none;}
+  .coach{position:absolute;max-width:210px;background:var(--accentA);color:#fff;font-size:12px;
+    line-height:1.5;padding:8px 10px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.4);pointer-events:auto;}
+  .coach .coach-x{position:absolute;top:1px;right:6px;cursor:pointer;opacity:0.8;font-size:14px;}
 </style>
 </head>
 <body>
@@ -239,7 +251,7 @@
   <table>
     <tr><td>1 / 2</td><td>播放/暂停 Deck A / B</td></tr>
     <tr><td>Q / W</td><td>载入选定歌曲到 Deck A / B</td></tr>
-    <tr><td>A / B</td><td>CUE 监听 Deck A / B</td></tr>
+    <tr><td>A / B</td><td>设/跳 CUE 点 Deck A / B（CUE 按钮短按设点、按住从 cue 点预览）</td></tr>
     <tr><td>S</td><td>BPM 同步（Deck B → A 或选中向另一个对齐）</td></tr>
     <tr><td>← →</td><td>微调当前 Deck 调速 ±0.02</td></tr>
     <tr><td>↑ ↓</td><td>微调交叉推子 ±0.05</td></tr>
@@ -249,6 +261,20 @@
     <tr><td>?</td><td>显示/隐藏此快捷键面板</td></tr>
   </table>
 </div>
+
+<div class="onboard" id="onboard" style="display:none">
+  <div class="onboard-card">
+    <h2>欢迎使用 Web DJ 👋</h2>
+    <ol class="onboard-steps">
+      <li><b>加歌</b>：点右上角「+ 添加歌曲」选本地音频（自动存进浏览器，刷新不丢）。</li>
+      <li><b>载入</b>：在播放列表选中一首，点唱盘的「载入」（或直接点歌曲右侧的 →A / →B）。</li>
+      <li><b>搓碟</b>：播起来后，<b>按住 jog 轮上下拖</b>就是黑胶搓碟——上拖快进带升调，下拖倒放带降调。</li>
+    </ol>
+    <p class="hint">提示：随时按 <b>?</b> 查看全部快捷键。</p>
+    <button class="btn" id="onboardStart" style="margin-top:10px">开始使用 →</button>
+  </div>
+</div>
+<div id="coachLayer" class="coach-layer"></div>
 
 <script>
 const qs = id => document.getElementById(id);
@@ -303,7 +329,7 @@ async function persistFile(fileId, blob){ try{ await dbPut('files', fileId, blob
 async function removeFile(fileId){ try{ await dbDelete('files', fileId); }catch(e){ console.warn('removeFile failed', e); } }
 async function persistPlaylist(){
   try{
-    const meta=tracks.map(t=>({name:t.name,duration:t.duration,bpm:t.bpm,key:t.key,introEnd:t.introEnd,outroStart:t.outroStart,analyzed:t.analyzed,fileId:t.fileId}));
+    const meta=tracks.map(t=>({name:t.name,duration:t.duration,bpm:t.bpm,key:t.key,introEnd:t.introEnd,outroStart:t.outroStart,analyzed:t.analyzed,fileId:t.fileId,size:t.size}));
     await dbPut('playlistMeta','tracks',JSON.stringify(meta));
   }catch(e){console.warn('persistPlaylist failed',e);}
 }
@@ -317,7 +343,7 @@ async function restorePlaylist(){
     for(const m of meta){
       const blob=await dbGet('files', m.fileId);
       const url=blob?URL.createObjectURL(blob):null;
-      tracks.push({...m, url, unavailable:!url});
+      tracks.push({...m, url, size:m.size, unavailable:!url});
       if(!url) console.warn('File missing in DB:', m.name);
     }
     renderPlaylist();
@@ -350,6 +376,10 @@ class Deck {
     this._readyPromise = null;     // 解码完成 promise（play 前等待）
     this.graphReady = false;
     this.rate = 1; this.rotation = 0; this.cueOn = false;
+    this.cuePoint = null;        // 真实 cue 点位置（秒），null = 未设
+    this._cueHeld = false;       // 是否正在按住 CUE 预览
+    this.loading = false;        // 整曲解码进行中
+    this._cueBtn = null;         // 对应 CUE 按钮（用于同步高亮）
     this.eq = {}; this.source = null; this.analyser = null;
     this.loaded = false; this.name = ''; this.loadedIndex = null; this.url = '';
     this._last = performance.now();
@@ -410,21 +440,31 @@ class Deck {
     // 重置本路分析状态与波形，准备分析新歌
     this.bpm = 0; this.detectedKey=''; this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
     this.energySamples = []; this.peaks = null;
-    this.loaded = false;
+    this.loaded = false; this.loading = true; this.cuePoint = null;
+    if (this._cueBtn) this._cueBtn.classList.remove('active');   // 换歌清空 cue 点高亮
+    this._reflectName();        // 立即显示「解码中…」
+    clearError();               // 清掉上一次的解码失败提示
     this._readyPromise = this._decode(url);     // 异步解码；play() 会 await 它
   }
   async _decode(url){
     if (!url || !url.startsWith('blob:')){ feedback('仅支持本地 / Blob 音源'); return; }
     ensureAudio();
+    clearError();
+    this.loading = true; this._reflectName();
     try{
       const ab = await fetch(url).then(r => r.arrayBuffer());
-      this.buffer = await AC.decodeAudioData(ab);
+      // 解码可能在某些文件上卡死，加 15s 超时作为兜底
+      this.buffer = await Promise.race([
+        AC.decodeAudioData(ab),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('解码超时（>15s）')), 15000))
+      ]);
       this._computePeaks();
-      this.loaded = true;
+      this.loaded = true; this.loading = false; this._reflectName();
       this.drawWave();
     }catch(e){
-      console.warn('decode failed', e);
-      feedback(`「${this.name}」解码失败：${e.message || e}`);
+      this.buffer = null; this.loaded = false; this.loading = false; this._reflectName();
+      const msg = `「${this.name}」解码失败：${e.message || e}`;
+      showError(msg); feedback(msg);
     }
   }
   _computePeaks(){
@@ -519,6 +559,32 @@ class Deck {
   setCross(g){ if (this.crossGain) this.crossGain.gain.value = g; }
   setCue(on){ this.cueOn = on; if (this.cueGain) this.cueGain.gain.value = on ? 1 : 0; }
   setReverb(v){ if (this.reverbSend) this.reverbSend.gain.value = v; }
+  _reflectName(){
+    const el = qs(this.prefix + '-name'); if (!el) return;
+    if (this.loading) el.textContent = '解码中…';
+    else if (!this.loaded) el.textContent = this.name ? '解码失败' : '未载入';
+    else el.textContent = this.name;
+  }
+  // —— 真实 CUE 点（标准 CDJ 行为）——
+  cueTap(){                        // 短按：在当前播放头设 cue 点并停在该处
+    if (!this.buffer) return;
+    this.cuePoint = this.position();
+    this.seek(this.cuePoint); this.pause();
+    if (this._cueBtn) this._cueBtn.classList.toggle('active', this.cuePoint != null);
+  }
+  cueHold(){                       // 按住：从 cue 点开始预览播放
+    if (!this.buffer) return;
+    if (this.cuePoint == null) this.cueTap();
+    this.seek(this.cuePoint); this.play();
+    this._cueHeld = true;
+    if (this._cueBtn) this._cueBtn.classList.toggle('active', true);
+  }
+  cueRelease(){                    // 松开：回到 cue 点并暂停
+    if (!this._cueHeld) return;
+    this._cueHeld = false;
+    this.pause(); this.seek(this.cuePoint);
+    if (this._cueBtn) this._cueBtn.classList.toggle('active', this.cuePoint != null);
+  }
   getLowEnergy(){
     if (!this.analyser) return 0;
     const buf = new Float32Array(this.analyser.frequencyBinCount);
@@ -672,10 +738,21 @@ const pitchCtrl = {a:null, b:null};
   const d = decks[prefix];
 
   sec.querySelectorAll('[data-act]').forEach(btn => {
+    const act = btn.dataset.act;
+    // CUE 按钮：短按=设/跳 cue 点，按住=从 cue 点预览（需 pointer 事件区分长短按）
+    if (act === 'cue'){
+      d._cueBtn = btn; btn.title = '短按：设/跳 cue 点 · 按住：从 cue 点预览';
+      let cueTimer = null, cueHolding = false;
+      btn.addEventListener('pointerdown', e => { e.preventDefault(); cueHolding = false;
+        cueTimer = setTimeout(() => { cueHolding = true; d.cueHold(); }, 180); });
+      const endCue = () => { clearTimeout(cueTimer);
+        if (cueHolding) d.cueRelease(); else d.cueTap(); };
+      btn.addEventListener('pointerup', endCue);
+      btn.addEventListener('pointerleave', () => { clearTimeout(cueTimer); if (cueHolding) d.cueRelease(); });
+      return;
+    }
     btn.addEventListener('click', () => {
-      const act = btn.dataset.act;
       if (act === 'play') d.toggle();
-      else if (act === 'cue'){ d.setCue(!d.cueOn); btn.classList.toggle('active', d.cueOn); }
       else if (act === 'sync'){
         const o = prefix === 'a' ? deckB : deckA;
         syncBPM(d, o);
@@ -729,6 +806,11 @@ const listEl = qs('trackList');
 
 const pendingAudio = [];
 function feedback(msg){ console.log('[feedback]', msg); const el = qs('importStatus'); if (el) el.textContent = msg; }
+function showError(msg){
+  const el = qs('errors'); if (!el) return;
+  el.textContent = msg; el.style.display = 'block';
+}
+function clearError(){ const el = qs('errors'); if (el){ el.textContent = ''; el.style.display = 'none'; } }
 function addFiles(files){
   console.log('[addFiles] called, count:', files ? files.length : 0);
   if (!files || !files.length){ feedback('未选择任何文件'); return; }
@@ -738,7 +820,7 @@ function addFiles(files){
     persistFile(fileId, f);                                          // 异步存进 IndexedDB
     const url = URL.createObjectURL(f);
     console.log('[addFiles] blob:', url);
-    const track = {name: f.name, url, duration: 0, bpm: 0, key: '', introEnd: 0, outroStart: 0, analyzed: false, fileId, unavailable: false};
+    const track = {name: f.name, url, duration: 0, bpm: 0, key: '', introEnd: 0, outroStart: 0, analyzed: false, fileId, size: f.size, unavailable: false};
     tracks.push(track);
     console.log('[addFiles] tracks now:', tracks.length);
     renderPlaylist();                       // 选中即入列，不等元数据，列表立刻显示
@@ -789,7 +871,7 @@ function loadTrack(i, deckKey){
   if (t.unavailable){ feedback(`「${t.name}」文件已丢失，请重新添加`); return; }
   const d = decks[deckKey];
   d.load(t.url, t.name, i);
-  qs(deckKey + '-name').textContent = t.name;
+  if (t.size && t.size > 50*1024*1024) feedback(`「${t.name}」文件较大，解码需几秒…`);
   selectedIndex = i; renderPlaylist();
 }
 function onDeckEnded(d){
@@ -1012,8 +1094,8 @@ const keyMap={
   '1':()=>deckA.toggle(), '2':()=>deckB.toggle(),
   'q':()=>{if(selectedIndex!=null)loadTrack(selectedIndex,'a');},
   'w':()=>{if(selectedIndex!=null)loadTrack(selectedIndex,'b');},
-  'a':()=>{deckA.setCue(!deckA.cueOn);},
-  'b':()=>{deckB.setCue(!deckB.cueOn);},
+  'a':(e)=>{ if(e.repeat) return; deckA.cueTap(); },
+  'b':(e)=>{ if(e.repeat) return; deckB.cueTap(); },
   's':()=>{
     const src=deckA.audio.paused?deckB:deckA;
     const dst=src===deckA?deckB:deckA;
@@ -1120,8 +1202,46 @@ function tick(){
 }
 tick();
 restorePlaylist();
+initOnboarding();
 /* 窗口尺寸变化时重绘波形（canvas 像素需按新宽度重算） */
 window.addEventListener('resize', () => { deckA.drawWave(); deckB.drawWave(); });
+
+/* ---------- 首次引导 ---------- */
+function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+function initOnboarding(){
+  const overlay = qs('onboard'), layer = qs('coachLayer');
+  if (!overlay || !layer) return;
+  const COACHES = [
+    {sel:'#addBtn',        text:'① 先点这里加歌',                        dismiss:'#addBtn'},
+    {sel:'.deck.a .jog',   text:'② 播起来后，按住这个轮子上下拖 = 搓碟',   dismiss:'.deck.a .jog'},
+    {sel:'#crossfader',    text:'③ 左右拖做两路混音',                      dismiss:'#crossfader'},
+  ];
+  function showCoach(){
+    COACHES.forEach(c => {
+      const target = document.querySelector(c.sel); if(!target) return;
+      const b = document.createElement('div'); b.className = 'coach';
+      b.innerHTML = `${c.text}<span class="coach-x">×</span>`;
+      layer.appendChild(b);
+      const r = target.getBoundingClientRect();
+      let left = Math.max(8, r.left + r.width/2 - 105);
+      let top  = r.bottom + 10;
+      if (top + 70 > window.innerHeight) top = Math.max(8, r.top - 78);
+      b.style.left = left + 'px'; b.style.top = top + 'px';
+      const dismiss = () => b.remove();
+      b.querySelector('.coach-x').addEventListener('click', dismiss);
+      const dt = document.querySelector(c.dismiss);
+      if (dt) dt.addEventListener('pointerdown', dismiss, {once:true});
+    });
+  }
+  if (lsGet('webdj_onboarded')) return;   // 老用户不骚扰
+  overlay.style.display = 'flex';
+  qs('onboardStart').addEventListener('click', () => {
+    lsSet('webdj_onboarded', '1');
+    overlay.style.display = 'none';
+    showCoach();
+  });
+}
 </script>
 </body>
 </html>
