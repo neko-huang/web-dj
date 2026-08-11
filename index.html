@@ -91,6 +91,10 @@
     border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer;}
   #trackList button:hover{border-color:var(--accentA);}
   .hint{font-size:11px; color:var(--mut); margin-top:8px;}
+  .errors-bar{display:none;align-items:flex-start;gap:10px;background:#3A1A1D;color:#FBC8C8;border:1px solid #6B2A2E;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px;line-height:1.4;max-width:680px;}
+  .errors-bar .msg{flex:1;white-space:pre-wrap;word-break:break-all;}
+  .errors-bar .x{appearance:none;background:transparent;border:0;color:#FBC8C8;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;opacity:0.7;}
+  .errors-bar .x:hover{opacity:1;}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;}
   .assist-row{display:flex;gap:14px;margin:0 16px 14px;}
   .assist-panel{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;}
@@ -147,7 +151,7 @@
   <input id="fileInput" type="file" accept="audio/*" multiple class="sr-only">
   <span class="hint">纯浏览器运行（Web Audio API），无需任何外接设备</span>
   <span id="importStatus" class="hint"></span>
-  <div id="errors" class="hint" style="color:#F09595;white-space:pre-wrap;max-height:80px;overflow:auto;display:none"></div>
+  <div id="errors" class="errors-bar"><span class="msg"></span><button class="x" type="button" aria-label="关闭错误">×</button></div>
 </header>
 
 <div class="auto-dj-bar" id="autoDJBar">
@@ -321,9 +325,7 @@
 
 <script>
 const qs = id => document.getElementById(id);
-window.addEventListener('error', function(e){
-  const el = qs('errors'); if(el){ el.style.display='block'; el.textContent += '[ERR] '+e.message+'\n'; }
-});
+window.addEventListener('error', function(e){ console.warn('[window.error]', e.message); });
 
 /* ---------- 音频环境 ---------- */
 let AC = null, masterBus, cueBus, reverbNode, reverbWet, recDest, masterAnalyser;
@@ -511,7 +513,19 @@ class Deck {
     clearError();
     this.loading = true; this._reflectName();
     try{
-      const ab = await fetch(url).then(r => r.arrayBuffer());
+      // fetch(blob:...) 在 restorePlaylist 后的跨上下文场景偶发 Failed to fetch；
+      // 等 50ms 再试一次通常打通（blob stream 句柄“冷启动”）。
+      async function fetchBlob(url){
+        const tries = [0, 80];            // 0ms 立即试，80ms 后重试一次
+        let lastErr = null;
+        for (const wait of tries){
+          if (wait) await new Promise(r => setTimeout(r, wait));
+          try { return await (await fetch(url)).arrayBuffer(); }
+          catch(e){ lastErr = e; }
+        }
+        throw new Error('读取文件失败（请刷新或重新拖入该文件）');
+      }
+      const ab = await fetchBlob(url);
       // 解码可能在某些文件上卡死，加 15s 超时作为兜底
       this.buffer = await Promise.race([
         AC.decodeAudioData(ab),
@@ -1003,11 +1017,18 @@ const listEl = qs('trackList');
 
 const pendingAudio = [];
 function feedback(msg){ console.log('[feedback]', msg); const el = qs('importStatus'); if (el) el.textContent = msg; }
+let _errTimer = 0;
 function showError(msg){
   const el = qs('errors'); if (!el) return;
-  el.textContent = msg; el.style.display = 'block';
+  const m = el.querySelector('.msg'); if (m) m.textContent = msg; else el.textContent = msg;
+  el.style.display = 'flex';
+  // 8s 自动消失；新错误会替换并重新计时
+  clearTimeout(_errTimer);
+  _errTimer = setTimeout(clearError, 8000);
+  const x = el.querySelector('.x');
+  if (x && !x._wired){ x._wired = true; x.addEventListener('click', clearError); el.addEventListener('click', e => { if (e.target === el) clearError(); }); }
 }
-function clearError(){ const el = qs('errors'); if (el){ el.textContent = ''; el.style.display = 'none'; } }
+function clearError(){ const el = qs('errors'); if (el){ el.style.display = 'none'; const m = el.querySelector('.msg'); if (m) m.textContent = ''; else el.textContent = ''; } clearTimeout(_errTimer); }
 function addFiles(files){
   console.log('[addFiles] called, count:', files ? files.length : 0);
   if (!files || !files.length){ feedback('未选择任何文件'); return; }
