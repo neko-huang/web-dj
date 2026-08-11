@@ -95,6 +95,11 @@
   .errors-bar .msg{flex:1;white-space:pre-wrap;word-break:break-all;}
   .errors-bar .x{appearance:none;background:transparent;border:0;color:#FBC8C8;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;opacity:0.7;}
   .errors-bar .x:hover{opacity:1;}
+  /* 协议受限提示（file:// 直接打开会全部解码失败） */
+  .proto-warn{display:none;align-items:flex-start;gap:10px;background:#3A2D14;color:#FBD58A;border:1px solid #8A6321;border-radius:8px;padding:10px 12px;margin-top:8px;font-size:12.5px;line-height:1.55;max-width:760px;white-space:pre-wrap;}
+  .proto-warn .msg{flex:1;word-break:break-word;}
+  .proto-warn .msg code{background:#1A1606;padding:1px 6px;border-radius:4px;color:#FFD58A;font-family:ui-monospace,Consolas,monospace;}
+  .proto-warn .x{appearance:none;background:transparent;border:0;color:#FBD58A;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;opacity:0.85;}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;}
   .assist-row{display:flex;gap:14px;margin:0 16px 14px;}
   .assist-panel{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;}
@@ -152,6 +157,7 @@
   <span class="hint">纯浏览器运行（Web Audio API），无需任何外接设备</span>
   <span id="importStatus" class="hint"></span>
   <div id="errors" class="errors-bar"><span class="msg"></span><button class="x" type="button" aria-label="关闭错误">×</button></div>
+  <div id="protoWarn" class="proto-warn"><span class="msg"></span><button class="x" type="button" aria-label="关闭提示">×</button></div>
 </header>
 
 <div class="auto-dj-bar" id="autoDJBar">
@@ -522,6 +528,10 @@ class Deck {
           if (wait) await new Promise(r => setTimeout(r, wait));
           try { return await (await fetch(url)).arrayBuffer(); }
           catch(e){ lastErr = e; }
+        }
+        // file:// 协议下浏览器禁止 fetch(blob:…)，换再多遍也没用 → 给具体引导
+        if (location.protocol === 'file:'){
+          throw new Error('file:// 协议下浏览器禁止读取本地音频。请用本地服务器打开（详见顶部黄条）');
         }
         throw new Error('读取文件失败（请刷新或重新拖入该文件）');
       }
@@ -1029,6 +1039,30 @@ function showError(msg){
   if (x && !x._wired){ x._wired = true; x.addEventListener('click', clearError); el.addEventListener('click', e => { if (e.target === el) clearError(); }); }
 }
 function clearError(){ const el = qs('errors'); if (el){ el.style.display = 'none'; const m = el.querySelector('.msg'); if (m) m.textContent = ''; else el.textContent = ''; } clearTimeout(_errTimer); }
+/* ---------- file:// 协议受限提示 ----------
+   直接双击 index.html 打开（file:// 协议）时，浏览器禁止 fetch(URL.createObjectURL(blob))，
+   所有本地音源会解码失败。本函数在启动时检测并给清晰引导。 */
+function checkProtocol(){
+  if (location.protocol !== 'file:') return;
+  const el = qs('protoWarn'); if (!el) return;
+  el.style.display = 'flex';
+  const m = el.querySelector('.msg');
+  m.innerHTML = '⚠ 检测到你正在用 <code>file:///</code> 协议直接打开本页 —— 浏览器禁止 <code>fetch(blob:…)</code>，所有本地音源都会「解码失败」（网页端 https 正常）。<br>'
+    + '请在 <code>E:\\Workbuddy\\Web-DJ\\</code> 目录下任选一种方式起一个本地 HTTP 服务器，然后改用 <code>http://localhost:8080/</code> 打开：'
+    + '<div style="margin:6px 0 2px 0">'
+    +   '<code>python -m http.server 8080</code>'
+    + '</div>'
+    + '<div style="margin:0">'
+    +   '<code>npx serve .</code>'
+    + '</div>';
+  // 也提示一下 importStatus
+  feedback('当前 file:// 协议打开，音频将无法解码 —— 请用本地 HTTP 服务器打开');
+  const x = el.querySelector('.x');
+  if (x && !x._wired){
+    x._wired = true;
+    x.addEventListener('click', () => { el.style.display = 'none'; });
+  }
+}
 function addFiles(files){
   console.log('[addFiles] called, count:', files ? files.length : 0);
   if (!files || !files.length){ feedback('未选择任何文件'); return; }
@@ -1437,6 +1471,7 @@ function tick(){
 }
 tick();
 restorePlaylist();
+checkProtocol();     // file:// 直接打开时给清晰引导（fetch blob 受限）
 initOnboarding();
 initDragDrop();
 /* 窗口尺寸变化时重绘波形（canvas 像素需按新宽度重算） */
