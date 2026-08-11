@@ -1093,6 +1093,9 @@ function loadTrack(i, deckKey){
   selectedIndex = i; renderPlaylist();
 }
 function onDeckEnded(d){
+  // Auto DJ 接管时，OUT 路的自然结束由 autoDJUpdate 的过渡门控处理：
+  // 不要在这里默认“自动续播下一首”，否则会覆盖 autoDJ 选好的切入曲，造成状态错乱 / 卡住。
+  if (autoDJOn && autoDJOut === d) return;
   if (d.loadedIndex != null && d.loadedIndex + 1 < tracks.length){
     loadTrack(d.loadedIndex + 1, d.prefix); d.play();
   }
@@ -1252,8 +1255,8 @@ function autoDJUpdate(){
   if(!autoDJOn) return;
   if(autoDJState==='scanning'){
     let playing=null,idleDeck=null;
-    if(!deckA.audio.paused&&deckA.audio.duration-deckA.audio.currentTime<30) playing=deckA,idleDeck=deckB;
-    if(!deckB.audio.paused&&deckB.audio.duration-deckB.audio.currentTime<30) playing=deckB,idleDeck=deckA;
+    if(!deckA.audio.paused&&deckA.audio.duration-deckA.audio.currentTime<60) playing=deckA,idleDeck=deckB;
+    if(!deckB.audio.paused&&deckB.audio.duration-deckB.audio.currentTime<60) playing=deckB,idleDeck=deckA;
     if(playing && idleDeck && autoDJState==='scanning'){
       autoDJOut=playing; autoDJIn=idleDeck;
       const ni=autoDJOut.loadedIndex;
@@ -1288,10 +1291,20 @@ function autoDJUpdate(){
     const rem = autoDJOut.audio.duration - autoDJOut.audio.currentTime;
     // use pre-analyzed outro start if available
     const outroStart = (outTrack && outTrack.outroStart > 0) ? outTrack.outroStart : autoDJOut.audio.duration - 20;
-    if(autoDJIn.bpm&&autoDJOut.bpm){
+    // BPM / 相位对齐（每帧微调，等到切入时已同步）—— 即使还在等解码也先对齐
+    if(autoDJIn.loaded && autoDJOut.bpm && autoDJIn.bpm){
       const adjRate = autoDJOut.rate * autoDJOut.bpm / autoDJIn.bpm;
       autoDJIn.setRate(Math.max(0.5, Math.min(1.5, adjRate)));
       if(pitchCtrl[autoDJIn.prefix]) pitchCtrl[autoDJIn.prefix].set(autoDJIn.rate);
+    }
+    // 解码门控：新歌没解码完就进过渡 → play() 还在 await 解码，交叉淡入的新歌哑火，
+    // 看着像“卡住、要人工干预”。这里等解码真正完成再进入过渡。
+    if(!autoDJIn.loaded || !autoDJIn.buffer){
+      if(rem <= autoDJDuration + 2){
+        qs('autoDJStatus').textContent='解码中…等待切入';
+        qs('autoDJStatus').className='status trans';
+      }
+      return;   // 下一帧继续等，解码完成自然落进下面的触发逻辑
     }
     // trigger transition at outro start or remaining time
     const triggerAt = Math.max(outroStart - 2, autoDJOut.audio.duration - autoDJDuration - 2);
