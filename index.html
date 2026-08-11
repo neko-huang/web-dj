@@ -780,6 +780,14 @@ function syncBPM(dst, src){
   const target = dst.rate * src.bpm / dst.bpm;
   dst.setRate(Math.max(0.5, Math.min(1.5, target)));
   if(pitchCtrl[dst.prefix]) pitchCtrl[dst.prefix].set(dst.rate);
+  // 相位对齐：把 dst 的 beat 相位微调到与 src 同相，避免「速度对齐但拍子错开」
+  const interval = 60 / dst.bpm;
+  const pSrc = src.getBeatPhase(src.audio.currentTime);
+  const pDst = dst.getBeatPhase(dst.audio.currentTime);
+  let delta = (pSrc - pDst) * interval;
+  while (delta > interval/2) delta -= interval;
+  while (delta < -interval/2) delta += interval;
+  if (dst.buffer){ const np = dst.position() + delta; dst.seek(Math.max(0, Math.min(dst.buffer.duration, np))); }
   feedback('BPM 已同步 → '+dst.prefix.toUpperCase()+' ('+Math.round(src.bpm)+' BPM)');
 }
 
