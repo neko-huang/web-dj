@@ -52,6 +52,11 @@
     background:var(--panel2); color:var(--txt); border:1px solid var(--line);}
   .transport button:hover{border-color:var(--accent);}
   .transport button.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .deck-row{display:flex; gap:6px; justify-content:center;}
+  .deck-row button{flex:1; padding:6px 0; font-size:11px; border-radius:6px; cursor:pointer;
+    background:var(--panel2); color:var(--mut); border:1px solid var(--line);}
+  .deck-row button:hover{border-color:var(--accent);}
+  .deck-row button.active{background:#5DCAA5; color:#10231b; border-color:#5DCAA5;}
   .deck-bottom{display:flex; gap:14px; justify-content:space-between; align-items:flex-end;}
   .eq{display:flex; gap:14px;}
   .eq .knob-wrap, .fader-wrap{display:flex; flex-direction:column; align-items:center; gap:6px;}
@@ -171,6 +176,21 @@
       <button data-act="cue">CUE 监听</button>
       <button data-act="sync">SYNC</button>
     </div>
+    <div class="deck-row">
+      <button data-act="loopin">IN</button>
+      <button data-act="loopout">OUT</button>
+      <button data-act="loop" data-n="1">1</button>
+      <button data-act="loop" data-n="2">2</button>
+      <button data-act="loop" data-n="4">4</button>
+      <button data-act="loop" data-n="8">8</button>
+      <button data-act="loopexit">×LOOP</button>
+    </div>
+    <div class="deck-row">
+      <button data-act="hotcue" data-i="0">C1</button>
+      <button data-act="hotcue" data-i="1">C2</button>
+      <button data-act="hotcue" data-i="2">C3</button>
+      <button data-act="hotcue" data-i="3">C4</button>
+    </div>
     <div class="deck-bottom">
       <div class="eq">
         <div class="knob-wrap"><div class="knob eq-low"><div class="knob-ind"></div></div><label>低</label></div>
@@ -216,6 +236,21 @@
       <button data-act="play">播放/暂停</button>
       <button data-act="cue">CUE 监听</button>
       <button data-act="sync">SYNC</button>
+    </div>
+    <div class="deck-row">
+      <button data-act="loopin">IN</button>
+      <button data-act="loopout">OUT</button>
+      <button data-act="loop" data-n="1">1</button>
+      <button data-act="loop" data-n="2">2</button>
+      <button data-act="loop" data-n="4">4</button>
+      <button data-act="loop" data-n="8">8</button>
+      <button data-act="loopexit">×LOOP</button>
+    </div>
+    <div class="deck-row">
+      <button data-act="hotcue" data-i="0">C1</button>
+      <button data-act="hotcue" data-i="1">C2</button>
+      <button data-act="hotcue" data-i="2">C3</button>
+      <button data-act="hotcue" data-i="3">C4</button>
     </div>
     <div class="deck-bottom">
       <div class="eq">
@@ -393,6 +428,10 @@ class Deck {
     this.graphReady = false;
     this.rate = 1; this.rotation = 0; this.cueOn = false;
     this.cuePoint = null;        // 真实 cue 点位置（秒），null = 未设
+    this.loop = null;            // 激活中的循环区间 {start, end}（秒），null = 无
+    this.loopStart = null; this.loopEnd = null;   // 手动 IN / OUT 记录
+    this.hotCues = [null,null,null,null];          // 4 个 hot cue 点（秒）
+    this._loopBtns = []; this._hotBtns = [];       // 按钮引用，用于高亮
     this._cueHeld = false;       // 是否正在按住 CUE 预览
     this.loading = false;        // 整曲解码进行中
     this._cueBtn = null;         // 对应 CUE 按钮（用于同步高亮）
@@ -457,6 +496,10 @@ class Deck {
     this.bpm = 0; this.detectedKey=''; this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
     this.energySamples = []; this.peaks = null;
     this.loaded = false; this.loading = true; this.cuePoint = null;
+    this.loop = null; this.loopStart = null; this.loopEnd = null;
+    this.hotCues = [null,null,null,null];
+    this._loopBtns.forEach(b => b && b.classList.remove('active'));
+    this._hotBtns.forEach(b => b && b.classList.remove('active'));
     if (this._cueBtn) this._cueBtn.classList.remove('active');   // 换歌清空 cue 点高亮
     this._reflectName();        // 立即显示「解码中…」
     clearError();               // 清掉上一次的解码失败提示
@@ -601,6 +644,38 @@ class Deck {
     this._cueHeld = false;
     this.pause(); this.seek(this.cuePoint);
     if (this._cueBtn) this._cueBtn.classList.toggle('active', this.cuePoint != null);
+  }
+  /* —— Loop 循环 —— */
+  loopIn(){ if(!this.buffer) return; this.loopStart = this.position(); this._tryActivateLoop(); }
+  loopOut(){ if(!this.buffer) return; this.loopEnd = this.position(); this._tryActivateLoop(); }
+  loopSize(n){   // 从当前拍网格建立 n 拍循环
+    if(!this.buffer || !this.bpm){ feedback('需先有 BPM 才能建立拍循环'); return; }
+    const interval = 60/this.bpm, cur = this.position(), phase = cur % interval;
+    const start = Math.max(0, cur - phase);
+    const end = Math.min(this.buffer.duration, start + n*interval);
+    this.loop = {start, end};
+    if (this.isPlaying) this.seek(start); else this._pausedAt = start;
+    this.drawWave();
+  }
+  loopExit(){ this.loop = null; this.loopStart = null; this.loopEnd = null; this.drawWave(); this._loopActiveUI(); }
+  _tryActivateLoop(){
+    if (this.loopStart != null && this.loopEnd != null && this.loopEnd > this.loopStart + 0.05){
+      this.loop = {start: this.loopStart, end: this.loopEnd};
+      if (this.isPlaying) this.seek(this.loopStart); else this._pausedAt = this.loopStart;
+      this.drawWave();
+    }
+  }
+  _loopActiveUI(){ this._loopBtns.forEach(b => { if (b) b.classList.toggle('active', !!this.loop); }); }
+  /* —— Hot Cue 热键点（CDJ 风格：未设→设，已设→跳到该点播放） —— */
+  hotCueTap(i){
+    if(!this.buffer) return;
+    if (this.hotCues[i] == null){
+      this.hotCues[i] = this.position();
+      if (this._hotBtns[i]) this._hotBtns[i].classList.add('active');
+    } else {
+      this.seek(this.hotCues[i]); this.play();
+    }
+    this.drawWave();
   }
   getLowEnergy(){
     if (!this.analyser) return 0;
@@ -767,6 +842,17 @@ class Deck {
       const bh = Math.max(1, this.peaks[i]*h);
       ctx.fillRect(i*bw, (h-bh)/2, Math.max(1, bw-0.5), bh);
     }
+    // 标记：loop 段高亮 / cue 点 / hot cue 点
+    const dur = this.buffer ? this.buffer.duration : 0;
+    if (dur > 0){
+      if (this.loop){
+        const x1 = this.loop.start/dur*w, x2 = this.loop.end/dur*w;
+        ctx.fillStyle = 'rgba(255,255,255,0.16)'; ctx.fillRect(x1, 0, Math.max(1,x2-x1), h);
+        ctx.fillStyle = '#5DCAA5'; ctx.fillRect(x1-1,0,2,h); ctx.fillRect(x2-1,0,2,h);
+      }
+      if (this.cuePoint != null){ const x = this.cuePoint/dur*w; ctx.fillStyle = '#378ADD'; ctx.fillRect(x-1,0,2,h); }
+      this.hotCues.forEach(p => { if (p != null){ const x = p/dur*w; ctx.fillStyle = '#EF9F27'; ctx.fillRect(x-1,0,2,h); } });
+    }
   }
 }
 
@@ -843,6 +929,8 @@ const pitchCtrl = {a:null, b:null};
 
   sec.querySelectorAll('[data-act]').forEach(btn => {
     const act = btn.dataset.act;
+    if (act === 'loop') d._loopBtns.push(btn);
+    else if (act === 'hotcue') d._hotBtns[+btn.dataset.i] = btn;
     // CUE 按钮：短按=设/跳 cue 点，按住=从 cue 点预览（需 pointer 事件区分长短按）
     if (act === 'cue'){
       d._cueBtn = btn; btn.title = '短按：设/跳 cue 点 · 按住：从 cue 点预览';
@@ -862,6 +950,11 @@ const pitchCtrl = {a:null, b:null};
         syncBPM(d, o);
       }
       else if (act === 'load'){ if (selectedIndex != null) loadTrack(selectedIndex, prefix); }
+      else if (act === 'loopin') d.loopIn();
+      else if (act === 'loopout') d.loopOut();
+      else if (act === 'loop') d.loopSize(+btn.dataset.n);
+      else if (act === 'loopexit') d.loopExit();
+      else if (act === 'hotcue') d.hotCueTap(+btn.dataset.i);
     });
   });
 
@@ -1299,6 +1392,7 @@ function tick(){
     qs(prefix + '-jog').style.transform = `rotate(${d.rotation}deg)`;
     const head = qs(prefix + '-wavehead');
     if(head) head.style.left = (dur ? cur/dur*100 : 0) + '%';
+    if (d.loop && d.isPlaying && !d.scratching && d.buffer && d.position() >= d.loop.end - 0.03) d.seek(d.loop.start);
     const vu = qs(prefix + '-vu');
     if (vu){ const lv = d._level(); vu.style.width = (lv*100) + '%'; vu.style.filter = lv > 0.98 ? 'brightness(1.4) saturate(1.5)' : ''; }
   });
