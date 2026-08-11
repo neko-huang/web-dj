@@ -43,6 +43,10 @@
   .wave-wrap{position:relative; height:46px; margin-top:4px; background:#0e1014; border-radius:6px; overflow:hidden;}
   .wave{width:100%; height:100%; display:block;}
   .wave-head{position:absolute; top:0; bottom:0; width:2px; background:var(--accent); left:0; pointer-events:none; box-shadow:0 0 6px var(--accent);}
+  .vu-row{display:flex; align-items:center; gap:8px; font-size:11px; color:var(--mut);}
+  .vu-track{position:relative; flex:1; height:8px; background:#0e1014; border-radius:4px; overflow:hidden;}
+  .vu-fill{display:block; height:100%; width:0; background:linear-gradient(90deg,#5DCAA5,#EF9F27 78%,#E24B4A); transition:width 0.05s linear;}
+  .deck .vu-row{margin-top:-2px;}
   .transport{display:flex; gap:8px; justify-content:center;}
   .transport button{flex:1; padding:9px 0; font-size:12px; border-radius:8px; cursor:pointer;
     background:var(--panel2); color:var(--txt); border:1px solid var(--line);}
@@ -127,6 +131,7 @@
   .coach{position:absolute;max-width:210px;background:var(--accentA);color:#fff;font-size:12px;
     line-height:1.5;padding:8px 10px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.4);pointer-events:auto;}
   .coach .coach-x{position:absolute;top:1px;right:6px;cursor:pointer;opacity:0.8;font-size:14px;}
+  .playlist.drag, .stage.drag{outline:2px dashed var(--accentA); outline-offset:-6px; border-radius:14px;}
 </style>
 </head>
 <body>
@@ -159,6 +164,7 @@
     <div class="time"><span id="a-cur">0:00</span> / <span id="a-dur">0:00</span></div>
     <div class="bar" id="a-bar"><div class="bar-fill" id="a-fill"></div></div>
     <div class="wave-wrap"><canvas class="wave" id="a-wave"></canvas><div class="wave-head" id="a-wavehead"></div></div>
+    <div class="vu-row"><span>电平</span><div class="vu-track"><i class="vu-fill" id="a-vu"></i></div></div>
     <div class="transport">
       <button data-act="load">载入</button>
       <button data-act="play">播放/暂停</button>
@@ -185,6 +191,7 @@
       <div class="fader horiz" id="crossfader"><div class="thumb"></div></div>
       <label style="font-size:11px;color:var(--mut)">交叉推子</label>
     </div>
+    <div class="vu-row"><span>主输出</span><div class="vu-track"><i class="vu-fill" id="masterVu"></i></div></div>
     <div class="vols">
       <div class="fader-wrap"><div class="fader vert" id="master"><div class="thumb"></div></div><label>主音量</label></div>
       <div class="fader-wrap"><div class="fader vert" id="cuevol"><div class="thumb"></div></div><label>监听</label></div>
@@ -203,6 +210,7 @@
     <div class="time"><span id="b-cur">0:00</span> / <span id="b-dur">0:00</span></div>
     <div class="bar" id="b-bar"><div class="bar-fill" id="b-fill"></div></div>
     <div class="wave-wrap"><canvas class="wave" id="b-wave"></canvas><div class="wave-head" id="b-wavehead"></div></div>
+    <div class="vu-row"><span>电平</span><div class="vu-track"><i class="vu-fill" id="b-vu"></i></div></div>
     <div class="transport">
       <button data-act="load">载入</button>
       <button data-act="play">播放/暂停</button>
@@ -226,7 +234,7 @@
 <section class="playlist">
   <h2>播放列表 Playlist <button class="tap-btn" id="smartOrderBtn" style="float:right">智能排序 (BPM)</button></h2>
   <ul id="trackList"></ul>
-  <p class="hint">点击某首歌选中（高亮），再点唱盘的「载入」；或直接点歌曲右侧的 →A / →B 一键载入。播放结束自动续播列表下一首。</p>
+  <p class="hint">点击某首歌选中（高亮），再点唱盘的「载入」；或直接点歌曲右侧的 →A / →B 一键载入。也可直接把音频文件拖进本区域。播放结束自动续播列表下一首。</p>
 </section>
 
 <div class="assist-row">
@@ -283,7 +291,7 @@ window.addEventListener('error', function(e){
 });
 
 /* ---------- 音频环境 ---------- */
-let AC = null, masterBus, cueBus, reverbNode, reverbWet, recDest;
+let AC = null, masterBus, cueBus, reverbNode, reverbWet, recDest, masterAnalyser;
 function ensureAudio(){
   if (AC) return;
   AC = new (window.AudioContext || window.webkitAudioContext)();
@@ -292,6 +300,7 @@ function ensureAudio(){
   cueBus   = AC.createGain(); cueBus.gain.value   = 0.7;
   masterBus.connect(AC.destination);
   cueBus.connect(AC.destination);
+  masterAnalyser = AC.createAnalyser(); masterAnalyser.fftSize = 1024; masterBus.connect(masterAnalyser);  // 主输出电平表
   const ir = AC.createBuffer(2, AC.sampleRate * 1.5, AC.sampleRate);
   for (let ch=0; ch<2; ch++){ const d=ir.getChannelData(ch); for (let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/(AC.sampleRate*0.25)); }
   reverbNode = AC.createConvolver(); reverbNode.buffer = ir;
@@ -300,6 +309,13 @@ function ensureAudio(){
   // 混音导出：把主输出同时接一个 MediaStreamDestination，供 MediaRecorder 录制
   recDest = AC.createMediaStreamDestination();
   masterBus.connect(recDest);
+}
+function masterLevel(){
+  if (!masterAnalyser) return 0;
+  const buf = new Float32Array(masterAnalyser.fftSize);
+  masterAnalyser.getFloatTimeDomainData(buf);
+  let s = 0; for (let i=0;i<buf.length;i++) s += buf[i]*buf[i];
+  return Math.min(1, Math.sqrt(s/buf.length) * 2.2);
 }
 
 /* ---------- IndexedDB 持久化 ---------- */
@@ -461,6 +477,7 @@ class Deck {
       this._computePeaks();
       this.loaded = true; this.loading = false; this._reflectName();
       this.drawWave();
+      this.analyzeOffline();   // 载入即预分析 BPM / 调性（异步，不阻塞首次渲染）
     }catch(e){
       this.buffer = null; this.loaded = false; this.loading = false; this._reflectName();
       const msg = `「${this.name}」解码失败：${e.message || e}`;
@@ -592,6 +609,14 @@ class Deck {
     let sum = 0; for (let i=2;i<12;i++) sum += Math.pow(10, buf[i]/20);
     return sum / 10;
   }
+  // 实时电平（RMS），供 VU 表；停机/无信号时为 0
+  _level(){
+    if (!this.analyser) return 0;
+    const buf = new Float32Array(this.analyser.fftSize);
+    this.analyser.getFloatTimeDomainData(buf);
+    let s = 0; for (let i=0;i<buf.length;i++) s += buf[i]*buf[i];
+    return Math.min(1, Math.sqrt(s/buf.length) * 2.2);   // 放大便于可视化
+  }
   detectBeat(now){
     // 频谱通量法：只关注低频(底鼓)帧间能量的"突然增大"作为拍点 onset，
     // 用滑动窗口自适应阈值过滤持续轰鸣，再用拍点间隔直方图选出最稳定的 BPM。
@@ -656,6 +681,77 @@ class Deck {
     for (let i=0;i<12;i++){ if(chroma[i]>mx){mx=chroma[i];mi=i;} }
     this.detectedKey = names[mi];
     return this.detectedKey;
+  }
+  /* —— 载入即预分析：decode 完成后离线跑 BPM + 调性，免去「先播才分析」 —— */
+  analyzeOffline(){
+    if (!this.buffer) return;
+    const token = (this._analysisToken = (this._analysisToken||0) + 1);  // 换歌令牌，防止异步分析串台
+    const bpm = this._detectBPMOffline();
+    if (bpm > 0 && token === this._analysisToken){ this.bpm = bpm; this._onAnalysis(); }
+    this._detectKeyOffline(token);
+  }
+  _onAnalysis(){ updateAnalysisUI(); }
+  _detectBPMOffline(){
+    const data = this.buffer.getChannelData(0), sr = this.buffer.sampleRate;
+    const n = Math.floor(Math.min(150, this.buffer.duration) * sr);
+    const frame = 1024, hop = 512, nEnv = Math.floor(n / hop);
+    if (nEnv < 8) return 0;
+    // 逐帧 RMS 包络
+    const env = new Float32Array(nEnv);
+    for (let i=0;i<nEnv;i++){ let s=0; const b=i*hop; for (let j=0;j<frame;j++){ const v=data[b+j]||0; s+=v*v; } env[i]=Math.sqrt(s/frame); }
+    // 正向差分 = onset 强度
+    const onset = new Float32Array(nEnv);
+    for (let i=1;i<nEnv;i++) onset[i] = Math.max(0, env[i]-env[i-1]);
+    // 自适应阈值取局部峰作为 beat 时间
+    const beats = []; const win = 20;
+    for (let i=win;i<nEnv-win;i++){
+      let m=0; for (let k=-win;k<=win;k++) m += onset[i+k]; m /= (2*win+1);
+      if (onset[i] > m*1.5 && onset[i] > onset[i-1] && onset[i] >= onset[i+1]) beats.push(i*hop/sr);
+    }
+    if (beats.length < 4) return 0;
+    // 拍点间隔直方图求众数 BPM
+    const hist = {};
+    for (let i=1;i<beats.length;i++){ const iv = beats[i]-beats[i-1]; if (iv<0.3||iv>1.5) continue; const bk = Math.round(iv/0.02)*0.02; hist[bk]=(hist[bk]||0)+1; }
+    let best=0, bestC=0; for (const k in hist){ if (hist[k]>bestC){ bestC=hist[k]; best=+k; } }
+    if (!best) return 0;
+    let bpm = Math.round(60/best);
+    while (bpm>170) bpm/=2; while (bpm<60) bpm*=2;   // 八度折叠回合理区间
+    return bpm;
+  }
+  _detectKeyOffline(token){
+    const data = this.buffer.getChannelData(0), sr = this.buffer.sampleRate;
+    const maxN = Math.floor(Math.min(40, this.buffer.duration) * sr);
+    if (maxN < 4096) return;
+    const frame = 4096, hop = 2048;
+    const chroma = new Float32Array(12);
+    const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const octs = [1,2,3,4,5];
+    const maxStart = maxN - frame;
+    let start = 0;
+    const CHUNK = 80;   // 每块 80 帧，setTimeout 让出主线程，避免 UI 冻结
+    const step = () => {
+      if (token !== this._analysisToken) return;   // 已被换歌取代，丢弃旧分析
+      const end = Math.min(start + CHUNK*hop, maxStart);
+      for (; start < end; start += hop){
+        for (let k=0;k<12;k++){
+          const f0 = 440*Math.pow(2,(k-9)/12);
+          let e = 0;
+          for (const o of octs){
+            const f = f0*o; if (f > sr/2-200) continue;
+            let re=0, im=0;
+            for (let n=0;n<frame;n++){ const s=data[start+n]||0; const w=0.5-0.5*Math.cos(2*Math.PI*n/frame); re+=s*w*Math.cos(2*Math.PI*f*n/sr); im+=s*w*Math.sin(2*Math.PI*f*n/sr); }
+            e += re*re + im*im;
+          }
+          chroma[k] += e;
+        }
+      }
+      if (start < maxStart){ setTimeout(step, 0); }
+      else {
+        let mx=0, mi=0; for (let i=0;i<12;i++){ if (chroma[i]>mx){ mx=chroma[i]; mi=i; } }
+        if (mx>0 && token === this._analysisToken){ this.detectedKey = names[mi]; this._onAnalysis(); }
+      }
+    };
+    step();
   }
   drawWave(){
     const cv = qs(this.prefix + '-wave'); if(!cv || !this.peaks) return;
@@ -1195,7 +1291,10 @@ function tick(){
     qs(prefix + '-jog').style.transform = `rotate(${d.rotation}deg)`;
     const head = qs(prefix + '-wavehead');
     if(head) head.style.left = (dur ? cur/dur*100 : 0) + '%';
+    const vu = qs(prefix + '-vu');
+    if (vu){ const lv = d._level(); vu.style.width = (lv*100) + '%'; vu.style.filter = lv > 0.98 ? 'brightness(1.4) saturate(1.5)' : ''; }
   });
+  const mv = qs('masterVu'); if (mv) mv.style.width = (masterLevel()*100) + '%';
   autoDJUpdate();
   updateAssist();
   requestAnimationFrame(tick);
@@ -1203,8 +1302,19 @@ function tick(){
 tick();
 restorePlaylist();
 initOnboarding();
+initDragDrop();
 /* 窗口尺寸变化时重绘波形（canvas 像素需按新宽度重算） */
 window.addEventListener('resize', () => { deckA.drawWave(); deckB.drawWave(); });
+
+/* ---------- 拖拽添加文件 ---------- */
+function initDragDrop(){
+  const zones = [qs('playlist'), qs('stage')].filter(Boolean);
+  zones.forEach(z => {
+    z.addEventListener('dragover', e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect='copy'; z.classList.add('drag'); });
+    z.addEventListener('dragleave', e => { if (!z.contains(e.relatedTarget)) z.classList.remove('drag'); });
+    z.addEventListener('drop', e => { e.preventDefault(); z.classList.remove('drag'); if (e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+  });
+}
 
 /* ---------- 首次引导 ---------- */
 function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
