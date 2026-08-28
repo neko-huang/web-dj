@@ -28,9 +28,10 @@
   .tag{background:var(--accent); color:#fff; font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600;}
   .track-name{font-size:12px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .wheel-wrap{display:flex; justify-content:center; padding:6px 0;}
+  /* 进度环：--p 由 JS 每帧写入（改 CSS 变量比整条 conic-gradient 重新解析便宜得多） */
   .progress-ring{width:180px; height:180px; border-radius:50%; display:flex;
     align-items:center; justify-content:center;
-    background:conic-gradient(var(--accent) 0deg, rgba(255,255,255,0.06) 0deg);}
+    background:conic-gradient(var(--accent) var(--p,0deg), rgba(255,255,255,0.06) 0deg);}
   .jog{width:150px; height:150px; border-radius:50%; position:relative; cursor:grab;
     background:radial-gradient(circle at 50% 40%, #3a4150, #15171c 70%);
     border:2px solid var(--line);}
@@ -70,8 +71,19 @@
   .fader.vert{width:16px; height:120px;}
   .fader.horiz{width:180px; height:16px;}
   .fader .thumb{position:absolute; background:var(--accent); border-radius:4px;}
+  /* thumb 位置由 JS 按 "t*100% - t*18px" 计算，保证两端都贴合轨道内沿（见 makeFader.render）
+     这里只给一个居中刻度线，方便读值 */
+  .fader .thumb::after{content:''; position:absolute; background:rgba(0,0,0,0.45);}
   .fader.vert .thumb{left:0; right:0; height:18px;}
+  .fader.vert .thumb::after{left:3px; right:3px; top:50%; height:2px; margin-top:-1px;}
   .fader.horiz .thumb{top:0; bottom:0; width:18px;}
+  .fader.horiz .thumb::after{top:3px; bottom:3px; left:50%; width:2px; margin-left:-1px;}
+  /* 交叉推子中位刻度 */
+  .fader.horiz::before{content:''; position:absolute; left:50%; top:-4px; bottom:-4px;
+    width:1px; background:var(--line); pointer-events:none;}
+  .pitch-lab{font-variant-numeric:tabular-nums;}
+  .pitch-lab.safe{color:#5DCAA5;}
+  .pitch-lab.risk{color:#EF9F27;}
   .mixer{width:200px; background:var(--panel); border:1px solid var(--line); border-radius:14px;
     padding:14px; display:flex; flex-direction:column; gap:14px;}
   .mixer h3{margin:0; font-size:12px; color:var(--mut); font-weight:600; text-align:center;}
@@ -90,6 +102,8 @@
   #trackList button{background:var(--panel2); color:var(--txt); border:1px solid var(--line);
     border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer;}
   #trackList button:hover{border-color:var(--accentA);}
+  #trackList button.del-btn{background:transparent;border:none;color:var(--mut);font-size:14px;padding:0 4px;}
+  #trackList button.del-btn:hover{color:#E24B4A;}
   .hint{font-size:11px; color:var(--mut); margin-top:8px;}
   .errors-bar{display:none;align-items:flex-start;gap:10px;background:#3A1A1D;color:#FBC8C8;border:1px solid #6B2A2E;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px;line-height:1.4;max-width:680px;}
   .errors-bar .msg{flex:1;white-space:pre-wrap;word-break:break-all;}
@@ -101,6 +115,15 @@
   .proto-warn .msg code{background:#1A1606;padding:1px 6px;border-radius:4px;color:#FFD58A;font-family:ui-monospace,Consolas,monospace;}
   .proto-warn .x{appearance:none;background:transparent;border:0;color:#FBD58A;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;opacity:0.85;}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;}
+  /* 操作反馈 toast：feedback() 的消息原本只写进 header 里的小字，几乎看不见 */
+  .toast{position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(8px);
+    background:#2b303b; color:var(--txt); border:1px solid var(--line); border-radius:10px;
+    padding:9px 16px; font-size:13px; z-index:200; opacity:0; pointer-events:none;
+    transition:opacity .18s ease, transform .18s ease; box-shadow:0 6px 20px rgba(0,0,0,.45);
+    max-width:min(70vw,520px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+  /* 主输出削波：电平打满时整条变红，比只提亮更醒目 */
+  .vu-track.clip{box-shadow:0 0 0 1px #E24B4A inset;}
   .assist-row{display:flex;gap:14px;margin:0 16px 14px;}
   .assist-panel{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;}
   .assist-panel h3{font-size:12px;margin:0 0 8px;color:var(--mut);}
@@ -155,6 +178,7 @@
   <button class="btn" type="button" id="recBtn" style="background:#E24B4A">● 录制</button>
   <input id="fileInput" type="file" accept="audio/*" multiple class="sr-only">
   <span class="hint">纯浏览器运行（Web Audio API），无需任何外接设备</span>
+  <span class="hint">当前操作：<b id="activeDeckLabel" style="color:var(--accentA)">A</b>（按 D 切换）</span>
   <span id="importStatus" class="hint"></span>
   <div id="errors" class="errors-bar"><span class="msg"></span><button class="x" type="button" aria-label="关闭错误">×</button></div>
   <div id="protoWarn" class="proto-warn"><span class="msg"></span><button class="x" type="button" aria-label="关闭提示">×</button></div>
@@ -185,6 +209,7 @@
       <button data-act="play">播放/暂停</button>
       <button data-act="cue">CUE 监听</button>
       <button data-act="sync">SYNC</button>
+      <button data-act="eject" title="卸载本路曲目" style="flex:0 0 34px">⏏</button>
     </div>
     <div class="deck-row">
       <button data-act="loopin">IN</button>
@@ -208,7 +233,7 @@
         <div class="knob-wrap"><div class="knob eq-high"><div class="knob-ind"></div></div><label>高</label></div>
       </div>
       <div class="faders">
-        <div class="fader-wrap"><div class="fader vert pitch"><div class="thumb"></div></div><label>调速</label></div>
+        <div class="fader-wrap"><div class="fader vert pitch"><div class="thumb"></div></div><label class="pitch-lab">0.0%</label></div>
         <div class="fader-wrap"><div class="fader vert chan"><div class="thumb"></div></div><label>通道</label></div>
       </div>
     </div>
@@ -246,6 +271,7 @@
       <button data-act="play">播放/暂停</button>
       <button data-act="cue">CUE 监听</button>
       <button data-act="sync">SYNC</button>
+      <button data-act="eject" title="卸载本路曲目" style="flex:0 0 34px">⏏</button>
     </div>
     <div class="deck-row">
       <button data-act="loopin">IN</button>
@@ -269,7 +295,7 @@
         <div class="knob-wrap"><div class="knob eq-high"><div class="knob-ind"></div></div><label>高</label></div>
       </div>
       <div class="faders">
-        <div class="fader-wrap"><div class="fader vert pitch"><div class="thumb"></div></div><label>调速</label></div>
+        <div class="fader-wrap"><div class="fader vert pitch"><div class="thumb"></div></div><label class="pitch-lab">0.0%</label></div>
         <div class="fader-wrap"><div class="fader vert chan"><div class="thumb"></div></div><label>通道</label></div>
       </div>
     </div>
@@ -277,7 +303,12 @@
 </div>
 
 <section class="playlist">
-  <h2>播放列表 Playlist <button class="tap-btn" id="smartOrderBtn" style="float:right">智能排序 (BPM)</button></h2>
+  <h2>播放列表 Playlist
+    <span style="float:right;display:flex;gap:6px">
+      <button class="tap-btn" id="clearListBtn" title="清空播放列表（含浏览器内已存的音频）">清空</button>
+      <button class="tap-btn" id="smartOrderBtn">智能排序 (BPM)</button>
+    </span>
+  </h2>
   <ul id="trackList"></ul>
   <p class="hint">点击某首歌选中（高亮），再点唱盘的「载入」；或直接点歌曲右侧的 →A / →B 一键载入。也可直接把音频文件拖进本区域。播放结束自动续播列表下一首。</p>
 </section>
@@ -302,16 +333,22 @@
   <span class="close" id="shortcutsClose">&times;</span>
   <h2>快捷键 Shortcuts（按 ? 打开/关闭）</h2>
   <table>
+    <tr><td>Space</td><td>播放/暂停「当前操作 Deck」（D 切换）</td></tr>
     <tr><td>1 / 2</td><td>播放/暂停 Deck A / B</td></tr>
     <tr><td>Q / W</td><td>载入选定歌曲到 Deck A / B</td></tr>
     <tr><td>A / B</td><td>设/跳 CUE 点 Deck A / B（CUE 按钮短按设点、按住从 cue 点预览）</td></tr>
-    <tr><td>S</td><td>BPM 同步（Deck B → A 或选中向另一个对齐）</td></tr>
-    <tr><td>← →</td><td>微调当前 Deck 调速 ±0.02</td></tr>
+    <tr><td>S</td><td>BPM 同步：把没在播的那一路对齐到正在播的那一路</td></tr>
+    <tr><td>D</td><td>切换「当前操作 Deck」A / B</td></tr>
+    <tr><td>← →</td><td>微调当前 Deck 调速 ±0.5%</td></tr>
+    <tr><td>R</td><td>调速归零（回到 100%）</td></tr>
     <tr><td>↑ ↓</td><td>微调交叉推子 ±0.05</td></tr>
     <tr><td>Tab</td><td>快切交叉推子（全左/全右）</td></tr>
-    <tr><td>F</td><td>执行交叉渐变过渡（8 秒）</td></tr>
+    <tr><td>F</td><td>交叉渐变过渡（8 秒，自动判断方向）</td></tr>
+    <tr><td>[ / ]</td><td>当前 Deck 循环 IN / OUT</td></tr>
+    <tr><td>\</td><td>退出循环</td></tr>
+    <tr><td>Z X C V</td><td>当前 Deck 热键点 C1–C4（右键按钮可清除）</td></tr>
     <tr><td>T</td><td>打开/关闭 Auto DJ</td></tr>
-    <tr><td>?</td><td>显示/隐藏此快捷键面板</td></tr>
+    <tr><td>?</td><td>显示/隐藏此快捷键面板（Esc 关闭）</td></tr>
   </table>
 </div>
 
@@ -328,19 +365,29 @@
   </div>
 </div>
 <div id="coachLayer" class="coach-layer"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
 const qs = id => document.getElementById(id);
-window.addEventListener('error', function(e){ console.warn('[window.error]', e.message); });
+window.addEventListener('error', function(e){ console.warn('[window.error]', e.message); showError('运行错误：' + e.message); });
+// IndexedDB / decodeAudioData / play() 全是 Promise，拒绝时不会触发 error 事件 —— 必须单独接
+window.addEventListener('unhandledrejection', function(e){
+  const msg = (e.reason && (e.reason.message || e.reason)) || '未知 Promise 拒绝';
+  console.warn('[unhandledrejection]', msg);
+  showError('异步错误：' + msg);
+});
 
 /* ---------- 音频环境 ---------- */
 let AC = null, masterBus, cueBus, reverbNode, reverbWet, recDest, masterAnalyser;
+// 主音量 / 监听音量先缓存：页面加载时推子就会 render() 一次，如果那时直接 ensureAudio()
+// 会在没有任何用户手势的情况下创建 AudioContext，被 Chrome 挂起并刷警告。等真正建好再写入。
+let pendingMaster = 0.9, pendingCue = 0.7;
 function ensureAudio(){
   if (AC) return;
   AC = new (window.AudioContext || window.webkitAudioContext)();
   // 两条输出总线：masterBus 送扬声器，cueBus 送监听（浏览器单输出下二者都会出声）
-  masterBus = AC.createGain(); masterBus.gain.value = 0.9;
-  cueBus   = AC.createGain(); cueBus.gain.value   = 0.7;
+  masterBus = AC.createGain(); masterBus.gain.value = pendingMaster;
+  cueBus   = AC.createGain(); cueBus.gain.value   = pendingCue;
   masterBus.connect(AC.destination);
   cueBus.connect(AC.destination);
   masterAnalyser = AC.createAnalyser(); masterAnalyser.fftSize = 1024; masterBus.connect(masterAnalyser);  // 主输出电平表
@@ -353,23 +400,90 @@ function ensureAudio(){
   recDest = AC.createMediaStreamDestination();
   masterBus.connect(recDest);
 }
+let _masterBuf = null;   // 复用缓冲：tick() 每帧都要读一次时域数据，别每帧都新建 Float32Array
 function masterLevel(){
   if (!masterAnalyser) return 0;
-  const buf = new Float32Array(masterAnalyser.fftSize);
-  masterAnalyser.getFloatTimeDomainData(buf);
-  let s = 0; for (let i=0;i<buf.length;i++) s += buf[i]*buf[i];
-  return Math.min(1, Math.sqrt(s/buf.length) * 2.2);
+  if (!_masterBuf || _masterBuf.length !== masterAnalyser.fftSize) _masterBuf = new Float32Array(masterAnalyser.fftSize);
+  masterAnalyser.getFloatTimeDomainData(_masterBuf);
+  let s = 0; for (let i=0;i<_masterBuf.length;i++) s += _masterBuf[i]*_masterBuf[i];
+  return Math.min(1, Math.sqrt(s/_masterBuf.length) * 2.2);
+}
+
+/* ---------- 分析工具：FFT + 调性模板 ---------- */
+
+// 迭代式 radix-2 FFT（原地、位反转置换）。
+// 调性检测原来用暴力 Goertzel：每帧 12 音级 × 5 倍频 × 4096 采样 ≈ 25 万次三角函数，
+// 30 秒音频要跑 2 亿次、卡住主线程好几秒。换成一次 FFT 后每帧只有 N/2·log2(N) 次蝶形运算，
+// 且内层没有三角函数 —— 实测从数秒降到几百毫秒。
+function fftRadix2(re, im){
+  const n = re.length;
+  for (let i=1, j=0; i<n; i++){                 // 位反转置换
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j){ let t=re[i]; re[i]=re[j]; re[j]=t; t=im[i]; im[i]=im[j]; im[j]=t; }
+  }
+  for (let len=2; len<=n; len<<=1){
+    const ang = -2*Math.PI/len, wr = Math.cos(ang), wi = Math.sin(ang);
+    const half = len >> 1;
+    for (let i=0; i<n; i+=len){
+      let cr = 1, ci = 0;
+      for (let k=0; k<half; k++){
+        const ur = re[i+k],            ui = im[i+k];
+        const xr = re[i+k+half],       xi = im[i+k+half];
+        const vr = xr*cr - xi*ci,      vi = xr*ci + xi*cr;
+        re[i+k] = ur+vr; im[i+k] = ui+vi;
+        re[i+k+half] = ur-vr; im[i+k+half] = ui-vi;
+        const ncr = cr*wr - ci*wi; ci = cr*wi + ci*wr; cr = ncr;   // 旋转因子递推，避免逐点算 cos/sin
+      }
+    }
+  }
+}
+
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+// Krumhansl-Schmuckler 调性轮廓：把 12 维 chroma 与 24 个大小调模板做相关，取最大者。
+// 比「取主导音高」强在两处：能分大小调，且用的是整条音级分布而不是单个峰值。
+const KS_MAJOR = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+const KS_MINOR = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+// 对 12 维向量做皮尔逊相关（模板常量，均值/标准差预先算好）
+function _corr(chroma, prof, pMean){
+  let cm = 0; for (let i=0;i<12;i++) cm += chroma[i]; cm /= 12;
+  let num = 0, dc = 0, dp = 0;
+  for (let i=0;i<12;i++){
+    const a = chroma[i]-cm, b = prof[i]-pMean;
+    num += a*b; dc += a*a; dp += b*b;
+  }
+  const den = Math.sqrt(dc*dp);
+  return den > 1e-9 ? num/den : 0;
+}
+const KS_MEAN_MAJ = KS_MAJOR.reduce((a,b)=>a+b,0)/12;
+const KS_MEAN_MIN = KS_MINOR.reduce((a,b)=>a+b,0)/12;
+/** chroma(12维) → {name:'Am', pc:9, mode:'min'} */
+function chromaToKey(chroma){
+  let bestScore = -Infinity, bestPc = 0, bestMode = 'maj';
+  for (let root=0; root<12; root++){
+    const rot = new Float32Array(12);
+    for (let i=0;i<12;i++) rot[i] = chroma[(i+root)%12];
+    const sMaj = _corr(rot, KS_MAJOR, KS_MEAN_MAJ);
+    const sMin = _corr(rot, KS_MINOR, KS_MEAN_MIN);
+    if (sMaj > bestScore){ bestScore = sMaj; bestPc = root; bestMode = 'maj'; }
+    if (sMin > bestScore){ bestScore = sMin; bestPc = root; bestMode = 'min'; }
+  }
+  return {name: NOTE_NAMES[bestPc] + (bestMode === 'min' ? 'm' : ''), pc: bestPc, mode: bestMode, score: bestScore};
 }
 
 /* ---------- IndexedDB 持久化 ---------- */
 const DB_NAME='webdj_db', DB_VER=1;
+let _dbPromise = null;   // 连接单例：恢复 N 首歌原本要开关 N+1 次连接
 function openDB(){
-  return new Promise((resolve, reject) => {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = new Promise((resolve, reject) => {
     const r=indexedDB.open(DB_NAME, DB_VER);
     r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('files'))db.createObjectStore('files');if(!db.objectStoreNames.contains('playlistMeta'))db.createObjectStore('playlistMeta');};
     r.onsuccess=e=>resolve(e.target.result);
-    r.onerror=e=>reject(e.target.error);
+    r.onerror=e=>{ _dbPromise = null; reject(e.target.error); };   // 失败就丢掉缓存，下次可重试
   });
+  return _dbPromise;
 }
 async function dbPut(storeName, key, value){
   const db=await openDB();
@@ -430,7 +544,7 @@ class Deck {
     this._rate = 1;                // 当前播放速率（搓碟时为瞬时速率）
     this.isPlaying = false;
     this.scratching = false;
-    this._scratchPos = 0;          // 搓碟时的目标位置
+    this._scratchWasPlaying = false;  // 搓碟前是否在播放（决定松手后是否继续播）
     this._onEnded = null;          // 'ended' 事件回调（onDeckEnded）
     this._readyPromise = null;     // 解码完成 promise（play 前等待）
     this.graphReady = false;
@@ -446,9 +560,18 @@ class Deck {
     this.eq = {}; this.source = null; this.analyser = null;
     this.loaded = false; this.name = ''; this.loadedIndex = null; this.url = '';
     this._last = performance.now();
-    this.bpm = 0; this.detectedKey = ''; this._fluxHist = []; this.beatTimes = [];
+    this.bpm = 0; this.bpmOffline = 0; this.detectedKey = ''; this.keyPc = -1; this.keyMode = '';
+    this._fluxHist = []; this.beatTimes = [];
     this._prevLow = 0; this._lastBeat = 0; this._lastAnalysis = 0; this._keyTimer = 0;
-    this.energySamples = []; this._energySampleTime = 0; this.peaks = null;
+    this.energySamples = []; this._energySampleTime = 0; this._metaWriteTime = 0; this.peaks = null;
+    this._levelBuf = null; this._freqBuf = null;    // 复用的分析缓冲，避免每帧 new Float32Array
+    this._lastCurText = '';                          // 时间文本缓存：每秒才变一次，没必要每帧写 DOM
+    // 每帧 tick() 原本要 getElementById 十几次，构造时一次查完缓存起来
+    this.ui = {
+      fill: qs(prefix+'-fill'), cur: qs(prefix+'-cur'), dur: qs(prefix+'-dur'),
+      ring: qs(prefix+'-ring'), jog: qs(prefix+'-jog'), head: qs(prefix+'-wavehead'),
+      vu: qs(prefix+'-vu'), wave: qs(prefix+'-wave'), name: qs(prefix+'-name'),
+    };
     // 门面对象：把其余 30+ 处 d.audio.x 调用代理到新引擎，避免大面积改动
     const self = this;
     this.audio = {
@@ -501,7 +624,8 @@ class Deck {
     // 资源生命周期由 addFiles / removeTrack 统一管理。
     this.url = url; this.name = name; this.loadedIndex = index;
     // 重置本路分析状态与波形，准备分析新歌
-    this.bpm = 0; this.detectedKey=''; this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
+    this.bpm = 0; this.bpmOffline = 0; this.detectedKey=''; this.keyPc = -1; this.keyMode = '';
+    this._fluxHist = []; this.beatTimes = []; this._prevLow = 0; this._lastBeat = 0;
     this.energySamples = []; this.peaks = null;
     this.loaded = false; this.loading = true; this.cuePoint = null;
     this.loop = null; this.loopStart = null; this.loopEnd = null;
@@ -580,10 +704,12 @@ class Deck {
   toggle(){ this.audio.paused ? this.play() : this.pause(); }
   // 当前播放位置（秒）：手算，不依赖 <audio>
   position(){
-    if (!AC) return 0;
-    if (this.scratching) return Math.max(0, this._scratchPos);
-    if (!this.isPlaying) return this._pausedAt;
-    const pos = this._startOffset + (AC.currentTime - this._startedAt) * this._rate;
+    if (!AC) return this._pausedAt || 0;
+    let pos;
+    if (!this.isPlaying) pos = this._pausedAt;
+    else pos = this._startOffset + (AC.currentTime - this._startedAt) * this._rate;
+    // 搓碟时速率可能为负，位置会滑出边界；统一夹回来，靠 _retime 的重启逻辑处理
+    if (this.buffer) pos = Math.max(0, Math.min(this.buffer.duration, pos));
     return Math.max(0, pos);
   }
   // 新建一个 AudioBufferSourceNode 并从 offset 以 rate 播放（source 是一次性的，必须重建）
@@ -601,6 +727,27 @@ class Deck {
     s.start(0, this._startOffset);
     this.isPlaying = true;
   }
+  /**
+   * 不停顿地改变播放速率。
+   * 关键是把「当前位置」重新设为基准点再改 playbackRate —— 直接改 rate 会让
+   * 已播放时长按新速率重算，导致位置突跳。
+   * @param {number} r 新速率（可为负 = 倒放）
+   * @param {boolean} restartAtBounds 位置已到边界时是否重建节点（搓碟需要；普通调速不需要）
+   */
+  _retime(r, restartAtBounds){
+    if (!this.buffer || !AC) return;
+    const dur = this.buffer.duration;
+    let pos = this._startOffset + (AC.currentTime - this._startedAt) * this._rate;
+    let atBound = false;
+    if (pos <= 0){ pos = 0; atBound = true; }
+    else if (pos >= dur){ pos = Math.max(0, dur); atBound = true; }
+    if (!this.srcNode || (atBound && restartAtBounds)){
+      this._start(pos, r);
+      return;
+    }
+    this._startOffset = pos; this._startedAt = AC.currentTime; this._rate = r;
+    this.srcNode.playbackRate.setValueAtTime(r, AC.currentTime);
+  }
   seek(pos){
     if (!this.buffer) return;
     pos = Math.max(0, Math.min(this.buffer.duration, pos));
@@ -609,34 +756,40 @@ class Deck {
   }
   setRate(r){
     this.rate = r;
-    // 播放中且非搓碟：实时改 playbackRate（AudioParam），并重新对齐位置基准，避免爆音
-    if (this.isPlaying && !this.scratching && this.srcNode){
-      const pos = this.position();
-      this.srcNode.playbackRate.setValueAtTime(r, AC.currentTime);
-      this._startOffset = pos; this._startedAt = AC.currentTime; this._rate = r;
-    }
+    // 播放中且非搓碟：实时改 playbackRate（AudioParam），并重新对齐位置基准，避免位置跳变
+    if (this.isPlaying && !this.scratching && this.srcNode) this._retime(r, false);
   }
-  // —— 真·搓碟：拖动 jog 时以瞬时速率播放，可正向 / 反向，松手恢复 ——
-  scratchTo(pos, vel){
+  /* —— 真·搓碟 ——
+     旧实现每个 pointermove 都 stop + new AudioBufferSourceNode（每秒重建上百个节点），
+     每次重建都是硬切 → 爆音 + 大量 GC。
+     现在复用同一个节点、只改 playbackRate：倒放（负速率）由 Web Audio 原生支持，
+     速率 = 拖动速度 + 位置误差修正（P 控制），手感跟手且无爆音。 */
+  beginScratch(){
     if (!this.buffer) return;
+    this._scratchWasPlaying = this.isPlaying;
+    if (!this.isPlaying) this._start(this._pausedAt, 0);   // 静止起手，拖动时才产生声音
     this.scratching = true;
-    pos = Math.max(0, Math.min(this.buffer.duration, pos));
-    this._scratchPos = pos;
-    const rate = Math.max(-8, Math.min(8, vel));   // 限制速率，避免极端爆音
-    if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
-    const s = AC.createBufferSource();
-    s.buffer = this.buffer;
-    s.playbackRate.value = rate;
-    s.connect(this.analyser); s.connect(this.eq.low);
-    this.srcNode = s;
-    this._startOffset = pos; this._startedAt = AC.currentTime; this._rate = rate;
-    s.start(0, pos);
-    this.isPlaying = true;
+  }
+  scratchTo(targetPos, vel){
+    if (!this.buffer || !AC) return;
+    const pos = this.position();
+    // 速率 = 拖动速度（前馈） + 位置误差修正（反馈），让转盘「粘」在指针上
+    let r = vel + (targetPos - pos) * 8;
+    r = Math.max(-8, Math.min(8, r));      // 限制速率，避免极端爆音
+    this._retime(r, true);                 // 到头/到尾时重建节点，防止 source 结束后卡死
   }
   endScratch(){
     if (!this.scratching) return;
     this.scratching = false;
-    this._start(this._scratchPos, this.rate);   // 从搓碟位置以正常速率继续
+    if (!this._scratchWasPlaying){
+      // CDJ 行为：暂停态下搓碟，松手应回到暂停（而不是偷偷开始播放）
+      this._pausedAt = this.position();
+      if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
+      this.isPlaying = false;
+      this.drawWave();
+      return;
+    }
+    this._retime(this.rate, true);   // 从搓碟位置以正常速率继续
   }
   setEQ(band, db){ if (this.eq && this.eq[band]) this.eq[band].gain.value = db; }
   setChannel(g){ if (this.channelGain) this.channelGain.gain.value = g; }
@@ -644,7 +797,7 @@ class Deck {
   setCue(on){ this.cueOn = on; if (this.cueGain) this.cueGain.gain.value = on ? 1 : 0; }
   setReverb(v){ if (this.reverbSend) this.reverbSend.gain.value = v; }
   _reflectName(){
-    const el = qs(this.prefix + '-name'); if (!el) return;
+    const el = (this.ui && this.ui.name) || qs(this.prefix + '-name'); if (!el) return;
     if (this.loading) el.textContent = '解码中…';
     else if (!this.loaded) el.textContent = this.name ? '解码失败' : '未载入';
     else el.textContent = this.name;
@@ -655,6 +808,7 @@ class Deck {
     this.cuePoint = this.position();
     this.seek(this.cuePoint); this.pause();
     if (this._cueBtn) this._cueBtn.classList.toggle('active', this.cuePoint != null);
+    this.drawWave();          // cue 标记画在波形上，设完要重绘
   }
   cueHold(){                       // 按住：从 cue 点开始预览播放
     if (!this.buffer) return;
@@ -679,14 +833,14 @@ class Deck {
     const end = Math.min(this.buffer.duration, start + n*interval);
     this.loop = {start, end};
     if (this.isPlaying) this.seek(start); else this._pausedAt = start;
-    this.drawWave();
+    this.drawWave(); this._loopActiveUI();
   }
   loopExit(){ this.loop = null; this.loopStart = null; this.loopEnd = null; this.drawWave(); this._loopActiveUI(); }
   _tryActivateLoop(){
     if (this.loopStart != null && this.loopEnd != null && this.loopEnd > this.loopStart + 0.05){
       this.loop = {start: this.loopStart, end: this.loopEnd};
       if (this.isPlaying) this.seek(this.loopStart); else this._pausedAt = this.loopStart;
-      this.drawWave();
+      this.drawWave(); this._loopActiveUI();
     }
   }
   _loopActiveUI(){ this._loopBtns.forEach(b => { if (b) b.classList.toggle('active', !!this.loop); }); }
@@ -701,20 +855,51 @@ class Deck {
     }
     this.drawWave();
   }
+  hotCueClear(i){
+    if (this.hotCues[i] == null) return;
+    this.hotCues[i] = null;
+    if (this._hotBtns[i]) this._hotBtns[i].classList.remove('active');
+    this.drawWave();
+    feedback(`已清除热键点 C${i+1}`);
+  }
   getLowEnergy(){
     if (!this.analyser) return 0;
-    const buf = new Float32Array(this.analyser.frequencyBinCount);
-    this.analyser.getFloatFrequencyData(buf);
-    let sum = 0; for (let i=2;i<12;i++) sum += Math.pow(10, buf[i]/20);
-    return sum / 10;
+    if (!this._freqBuf || this._freqBuf.length !== this.analyser.frequencyBinCount)
+      this._freqBuf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(this._freqBuf);
+    // 按赫兹取底鼓频段 40–250Hz：bin 宽度 = 采样率/fftSize，写死索引会让不同设备结果不一致
+    const bw = this.analyser.context.sampleRate / this.analyser.fftSize;
+    const lo = Math.max(1, Math.floor(40 / bw)), hi = Math.max(lo + 1, Math.ceil(250 / bw));
+    let sum = 0; for (let i=lo;i<hi;i++) sum += Math.pow(10, this._freqBuf[i]/20);
+    return sum / (hi - lo);
   }
   // 实时电平（RMS），供 VU 表；停机/无信号时为 0
   _level(){
     if (!this.analyser) return 0;
-    const buf = new Float32Array(this.analyser.fftSize);
-    this.analyser.getFloatTimeDomainData(buf);
+    if (!this._levelBuf || this._levelBuf.length !== this.analyser.fftSize)
+      this._levelBuf = new Float32Array(this.analyser.fftSize);
+    this.analyser.getFloatTimeDomainData(this._levelBuf);
+    const buf = this._levelBuf;
     let s = 0; for (let i=0;i<buf.length;i++) s += buf[i]*buf[i];
     return Math.min(1, Math.sqrt(s/buf.length) * 2.2);   // 放大便于可视化
+  }
+  /** 卸载本路曲目（EJECT）：停播、断开音源、清空所有标记点 */
+  eject(){
+    if (this.srcNode){ try{ this.srcNode.stop(); }catch(e){} this.srcNode = null; }
+    this.isPlaying = false; this.scratching = false;
+    this.buffer = null; this.peaks = null; this.loaded = false; this.loading = false;
+    this._readyPromise = null; this._pausedAt = 0; this._startOffset = 0;
+    this.bpm = 0; this.bpmOffline = 0; this.detectedKey = ''; this.keyPc = -1; this.keyMode = '';
+    this.beatTimes = []; this._fluxHist = []; this.energySamples = [];
+    this.cuePoint = null; this.loop = null; this.loopStart = null; this.loopEnd = null;
+    this.hotCues = [null,null,null,null];
+    this.loadedIndex = null; this.name = ''; this.url = '';
+    this._loopBtns.forEach(b => b && b.classList.remove('active'));
+    this._hotBtns.forEach(b => b && b.classList.remove('active'));
+    if (this._cueBtn) this._cueBtn.classList.remove('active');
+    this._reflectName();
+    this.drawWave();
+    updateAnalysisUI();
   }
   detectBeat(now){
     // 频谱通量法：只关注低频(底鼓)帧间能量的"突然增大"作为拍点 onset，
@@ -751,7 +936,11 @@ class Deck {
           // 八度折叠：电子/舞曲常把半拍误判成双倍 BPM（如 75→150），折回合理区间
           while (newBPM > 170) newBPM /= 2;
           while (newBPM < 60)  newBPM *= 2;
-          this.bpm = this.bpm > 0 ? Math.round(this.bpm*0.65 + newBPM*0.35) : newBPM;
+          // 实时检测只有 30fps 的低频通量，精度远不如载入时的离线全曲分析。
+          // 离线已有结果时，实时值只驱动节拍闪点，不回写 bpm，免得把准的结果带偏。
+          if (!this.bpmOffline){
+            this.bpm = this.bpm > 0 ? Math.round(this.bpm*0.65 + newBPM*0.35) : newBPM;
+          }
         }
       }
       return true;
@@ -763,31 +952,43 @@ class Deck {
     const interval = 60/this.bpm;
     return (cur % interval) / interval;
   }
+  /**
+   * 实时调性估算（兜底）：把 analyser 的频谱折成 12 维 chroma，再做 K-S 模板相关。
+   * 只取「主导音高」的老做法分不出大小调，也扛不住泛音干扰，这里换成同样的相关匹配。
+   * 精度仍不如离线全曲分析，所以只在离线没算出结果时才回写。
+   */
   estimateKey(){
     if (!this.analyser || !this.audio.duration || this.audio.paused) return '';
-    const freqBuf = new Float32Array(this.analyser.frequencyBinCount);
-    this.analyser.getFloatFrequencyData(freqBuf);
-    const sr = this.analyser.context.sampleRate, fftS = this.analyser.fftSize, bw = sr/fftS;
-    const chroma = [0,0,0,0,0,0,0,0,0,0,0,0];
-    const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-    for (let i=0;i<freqBuf.length;i++){
-      const f = i*bw; if (f<50||f>4000) continue;
-      const mag = Math.pow(10, freqBuf[i]/20);
-      const pc = Math.round(69+12*Math.log2(f/440))%12;
-      if (pc>=0) chroma[pc] += mag;
+    if (this.detectedKey) return this.detectedKey;      // 离线结果优先，别用实时值覆盖它
+    if (!this._freqBuf || this._freqBuf.length !== this.analyser.frequencyBinCount)
+      this._freqBuf = new Float32Array(this.analyser.frequencyBinCount);
+    this.analyser.getFloatFrequencyData(this._freqBuf);
+    const sr = this.analyser.context.sampleRate, bw = sr / this.analyser.fftSize;
+    const chroma = new Float32Array(12);
+    for (let i=1;i<this._freqBuf.length;i++){
+      const f = i*bw; if (f < 60 || f > 3000) continue;
+      const mag = Math.pow(10, this._freqBuf[i]/20);     // dB → 线性幅度
+      const pc = ((Math.round(69 + 12*Math.log2(f/440)) % 12) + 12) % 12;
+      chroma[pc] += mag;
     }
-    let mx=0,mi=0;
-    for (let i=0;i<12;i++){ if(chroma[i]>mx){mx=chroma[i];mi=i;} }
-    this.detectedKey = names[mi];
+    const k = chromaToKey(chroma);
+    this.detectedKey = k.name; this.keyPc = k.pc; this.keyMode = k.mode;
     return this.detectedKey;
   }
   /* —— 载入即预分析：decode 完成后离线跑 BPM + 调性，免去「先播才分析」 —— */
   analyzeOffline(){
     if (!this.buffer) return;
     const token = (this._analysisToken = (this._analysisToken||0) + 1);  // 换歌令牌，防止异步分析串台
-    const bpm = this._detectBPMOffline();
-    if (bpm > 0 && token === this._analysisToken){ this.bpm = bpm; this._onAnalysis(); }
-    this._detectKeyOffline(token);
+    // 让出一帧再开跑：BPM 分析是同步的（几十毫秒），别挡住「解码完成」的首次渲染
+    setTimeout(() => {
+      if (token !== this._analysisToken || !this.buffer) return;
+      const bpm = this._detectBPMOffline();
+      if (bpm > 0 && token === this._analysisToken){
+        this.bpm = bpm; this.bpmOffline = bpm;   // 标记为离线精算值，实时检测不再覆盖
+        this._onAnalysis();
+      }
+      this._detectKeyOffline(token);
+    }, 0);
   }
   _onAnalysis(){ updateAnalysisUI(); }
   _detectBPMOffline(){
@@ -809,57 +1010,100 @@ class Deck {
     }
     if (beats.length < 4) return 0;
     // 拍点间隔直方图求众数 BPM
-    const hist = {};
-    for (let i=1;i<beats.length;i++){ const iv = beats[i]-beats[i-1]; if (iv<0.3||iv>1.5) continue; const bk = Math.round(iv/0.02)*0.02; hist[bk]=(hist[bk]||0)+1; }
-    let best=0, bestC=0; for (const k in hist){ if (hist[k]>bestC){ bestC=hist[k]; best=+k; } }
-    if (!best) return 0;
-    let bpm = Math.round(60/best);
+    const hist = {}, ivs = [];
+    for (let i=1;i<beats.length;i++){
+      const iv = beats[i]-beats[i-1];
+      if (iv<0.25||iv>1.5) continue;      // 0.25–1.5s ≈ 40–240 BPM 的拍间隔
+      ivs.push(iv);
+      const bk = Math.round(iv/0.01)*0.01;
+      hist[bk]=(hist[bk]||0)+1;
+    }
+    let bestBk=0, bestC=0;
+    for (const k in hist){ if (hist[k]>bestC){ bestC=hist[k]; bestBk=+k; } }
+    if (!bestBk) return 0;
+    // 分桶会带来系统性偏差（128BPM 的间隔 0.46875s 落进 0.47 桶 → 算成 130）。
+    // 用众数桶附近的原始间隔取均值，把量化误差消掉。
+    let sum=0, cnt=0;
+    for (const iv of ivs){ if (Math.abs(iv-bestBk) <= 0.03){ sum+=iv; cnt++; } }
+    const refined = cnt ? sum/cnt : bestBk;
+    let bpm = 60/refined;
     while (bpm>170) bpm/=2; while (bpm<60) bpm*=2;   // 八度折叠回合理区间
-    return bpm;
+    return Math.round(bpm);
   }
+  /**
+   * 离线调性分析（载入即跑）。
+   * 老实现是暴力 Goertzel：12 音级 × 5 "倍频" × 4096 采样逐点算 cos/sin，
+   * 30 秒音频约 2 亿次三角函数，主线程卡好几秒。而且 octs=[1,2,3,4,5] 乘出来的是
+   * **谐波**不是倍频（3×C=G），会把 G 的能量算进 C 的 chroma，结论本来就偏。
+   * 现在：每帧做一次 radix-2 FFT，再按真正的八度 (f0 × 2^o) 取 bin，最后 K-S 模板相关分大小调。
+   */
   _detectKeyOffline(token){
     const data = this.buffer.getChannelData(0), sr = this.buffer.sampleRate;
-    const maxN = Math.floor(Math.min(40, this.buffer.duration) * sr);
-    if (maxN < 4096) return;
-    const frame = 4096, hop = 2048;
-    const chroma = new Float32Array(12);
-    const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-    const octs = [1,2,3,4,5];
-    const maxStart = maxN - frame;
-    let start = 0;
-    const CHUNK = 80;   // 每块 80 帧，setTimeout 让出主线程，避免 UI 冻结
+    const seconds = Math.min(30, this.buffer.duration);
+    // 帧长决定频率分辨率 = sr/frame。4096 点只有 10.8Hz 的分辨率，而 C4 到 C#4 才差 15.6Hz
+    // —— 相邻两个半音的主瓣会互相污染，实测 chroma 几乎是平的（对比度 1.2），根本分不出调。
+    // 16384 点给到 2.7Hz 分辨率，对比度能到 ~1700。帧长变大但帧数变少，总开销基本持平。
+    const frame = 16384, hop = 8192;
+    const totalFrames = Math.floor((seconds * sr - frame) / hop);
+    if (totalFrames < 2) return;
+    const chroma = new Float64Array(12);                    // 帧数多、量级大，用双精度防累积误差
+    const re = new Float32Array(frame), im = new Float32Array(frame);
+    const win = new Float32Array(frame);                    // Hann 窗，预计算一次
+    for (let n=0;n<frame;n++) win[n] = 0.5 - 0.5*Math.cos(2*Math.PI*n/frame);
+    const bw = sr / frame;                                  // 每个 bin 的赫兹数
+    const nyqBin = (frame >> 1) - 1;
+    const OCTS = [-2,-1,0,1,2];                             // C2…C6（相对基准音的真正八度）
+    const CHUNK = 6;                                        // 每块 6 帧（≈1.1s 音频）后让出主线程
+    let fi = 0;
     const step = () => {
-      if (token !== this._analysisToken) return;   // 已被换歌取代，丢弃旧分析
-      const end = Math.min(start + CHUNK*hop, maxStart);
-      for (; start < end; start += hop){
+      if (token !== this._analysisToken) return;            // 已被换歌取代，丢弃旧分析
+      const stop = Math.min(fi + CHUNK, totalFrames);
+      for (; fi < stop; fi++){
+        const base = fi * hop;
+        for (let n=0;n<frame;n++){ re[n] = (data[base+n]||0) * win[n]; im[n] = 0; }
+        fftRadix2(re, im);
         for (let k=0;k<12;k++){
-          const f0 = 440*Math.pow(2,(k-9)/12);
-          let e = 0;
-          for (const o of octs){
-            const f = f0*o; if (f > sr/2-200) continue;
-            let re=0, im=0;
-            for (let n=0;n<frame;n++){ const s=data[start+n]||0; const w=0.5-0.5*Math.cos(2*Math.PI*n/frame); re+=s*w*Math.cos(2*Math.PI*f*n/sr); im+=s*w*Math.sin(2*Math.PI*f*n/sr); }
-            e += re*re + im*im;
+          const f0 = 440 * Math.pow(2, (k-9)/12);           // k=0 → C4
+          for (const o of OCTS){
+            const f = f0 * Math.pow(2, o);
+            if (f < 40 || f > sr/2 - bw) continue;
+            // 目标频率通常不落在 bin 正中，用抛物线插值估真实峰值幅度。
+            // 直接取最近 bin 会低估，取邻域最大值则会把旁边半音的能量一起吃进来。
+            const j0 = Math.min(nyqBin-1, Math.max(1, Math.round(f / bw)));
+            const a  = Math.sqrt(re[j0-1]*re[j0-1] + im[j0-1]*im[j0-1]);
+            const b  = Math.sqrt(re[j0]  *re[j0]   + im[j0]  *im[j0]);
+            const c2 = Math.sqrt(re[j0+1]*re[j0+1] + im[j0+1]*im[j0+1]);
+            const den = a - 2*b + c2;
+            const p = den !== 0 ? 0.5*(a - c2)/den : 0;
+            const mag = b - 0.25*(a - c2)*p;
+            if (mag > 0) chroma[k] += mag;
           }
-          chroma[k] += e;
         }
       }
-      if (start < maxStart){ setTimeout(step, 0); }
-      else {
-        let mx=0, mi=0; for (let i=0;i<12;i++){ if (chroma[i]>mx){ mx=chroma[i]; mi=i; } }
-        if (mx>0 && token === this._analysisToken){ this.detectedKey = names[mi]; this._onAnalysis(); }
+      if (fi < totalFrames){ setTimeout(step, 0); return; }
+      let any = 0; for (let i=0;i<12;i++) any += chroma[i];
+      if (any > 0 && token === this._analysisToken){
+        const k = chromaToKey(chroma);
+        this.detectedKey = k.name; this.keyPc = k.pc; this.keyMode = k.mode;
+        this._onAnalysis();
       }
     };
     step();
   }
   drawWave(){
-    const cv = qs(this.prefix + '-wave'); if(!cv || !this.peaks) return;
+    const cv = this.ui ? this.ui.wave : qs(this.prefix + '-wave');
+    if(!cv) return;
     const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth, h = cv.clientHeight;
     if(!w || !h) return;
     cv.width = w*dpr; cv.height = h*dpr;
     const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.clearRect(0,0,w,h);
+    if(!this.peaks){
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(0, h/2 - 1, w, 2);        // 未载入：画一条中线，别留空白让人以为坏了
+      return;
+    }
     const n = this.peaks.length, bw = w/n;
     ctx.fillStyle = getComputedStyle(cv).getPropertyValue('--accent') || '#378ADD';
     for(let i=0;i<n;i++){
@@ -903,8 +1147,11 @@ function syncBPM(dst, src){
 
 /* ---------- 控件工厂：旋钮 / 推子 ---------- */
 function makeKnob(el, {min, max, value=0, onChange}){
-  let val = value; const ind = el.querySelector('.knob-ind');
-  if (!el || !ind) return { set(){}, get:() => value };
+  // 守卫必须写在解引用之前 —— 老代码先 querySelector 再判空，el 为 null 时守卫永远执行不到
+  if (!el) return { set(){}, get:() => value, el:null };
+  const ind = el.querySelector('.knob-ind');
+  if (!ind) return { set(){}, get:() => value, el };
+  let val = value;
   function render(){
     const t = (val - min) / (max - min);
     ind.style.transform = `translateX(-50%) rotate(${-135 + t*270}deg)`;
@@ -914,17 +1161,23 @@ function makeKnob(el, {min, max, value=0, onChange}){
   el.addEventListener('pointerdown', e => { active=true; sv=val; sy=e.clientY; el.setPointerCapture(e.pointerId); });
   el.addEventListener('pointermove', e => { if(!active) return; const dy=sy-e.clientY; val=Math.max(min, Math.min(max, sv+dy*0.3)); render(); });
   el.addEventListener('pointerup',   () => { active=false; });
+  // 系统手势 / 触摸中断会派发 pointercancel，少了它控件会「粘」在指针上
+  el.addEventListener('pointercancel', () => { active=false; });
   el.addEventListener('wheel', e => { e.preventDefault(); val=Math.max(min, Math.min(max, val - Math.sign(e.deltaY)*2)); render(); }, {passive:false});
   render();
-  return { set:v => { val=v; render(); }, get:() => val };
+  return { set:v => { val=v; render(); }, get:() => val, el };
 }
 function makeFader(el, {min, max, value, vertical=true, onChange}){
-  let val = value; const thumb = el.querySelector('.thumb');
-  if (!el || !thumb) return { set(){}, get:() => value };
+  if (!el) return { set(){}, get:() => value, el:null };
+  const thumb = el.querySelector('.thumb');
+  if (!thumb) return { set(){}, get:() => value, el };
+  let val = value;
+  const THUMB = 18;   // .fader .thumb 的宽/高，定位时要减掉，否则两端会滑出轨道
   function render(){
     const t = (val - min) / (max - min);
-    if (vertical) thumb.style.bottom = (t*100) + '%';
-    else          thumb.style.left   = (t*100) + '%';
+    // t*100% - t*18px：t=0 贴起点，t=1 贴终点（老写法 t=1 时整个 thumb 跑到轨道外面看不见了）
+    if (vertical) thumb.style.bottom = `calc(${(t*100).toFixed(3)}% - ${(t*THUMB).toFixed(2)}px)`;
+    else          thumb.style.left   = `calc(${(t*100).toFixed(3)}% - ${(t*THUMB).toFixed(2)}px)`;
     onChange && onChange(val);
   }
   let sp, sv, active=false;
@@ -933,16 +1186,18 @@ function makeFader(el, {min, max, value, vertical=true, onChange}){
     if(!active) return;
     const pos = vertical?e.clientY:e.clientX;
     const rect = el.getBoundingClientRect();
-    const size = vertical?rect.height:rect.width;
-    const delta = (sp - pos) / size;          // 向上/向右为正
+    // 有效行程要扣掉 thumb 自身尺寸，否则两端各有一截「拉不动」
+    const size = (vertical?rect.height:rect.width) - THUMB;
+    const delta = (sp - pos) / (size || 1);          // 向上/向右为正
     let t = (sv - min)/(max - min) + delta;
     t = Math.max(0, Math.min(1, t));
     val = min + t*(max - min); render();
   });
   el.addEventListener('pointerup', () => { active=false; });
+  el.addEventListener('pointercancel', () => { active=false; });
   el.addEventListener('wheel', e => { e.preventDefault(); let t=(val-min)/(max-min) - Math.sign(e.deltaY)*0.05; t=Math.max(0,Math.min(1,t)); val=min+t*(max-min); render(); }, {passive:false});
   render();
-  return { set:v => { val=v; render(); }, get:() => val };
+  return { set:v => { val=v; render(); }, get:() => val, el };
 }
 
 /* ---------- 绑定两个唱盘 ---------- */
@@ -974,19 +1229,35 @@ const pitchCtrl = {a:null, b:null};
         syncBPM(d, o);
       }
       else if (act === 'load'){ if (selectedIndex != null) loadTrack(selectedIndex, prefix); }
+      else if (act === 'eject'){ d.eject(); feedback('已卸载 Deck ' + prefix.toUpperCase()); }
       else if (act === 'loopin') d.loopIn();
       else if (act === 'loopout') d.loopOut();
       else if (act === 'loop') d.loopSize(+btn.dataset.n);
       else if (act === 'loopexit') d.loopExit();
       else if (act === 'hotcue') d.hotCueTap(+btn.dataset.i);
     });
+    // 热键点：右键清除（CDJ 上也是类似的长按/组合操作），否则设错了没法改
+    if (act === 'hotcue'){
+      btn.title = '点击：设点 / 跳转 · 右键：清除';
+      btn.addEventListener('contextmenu', e => { e.preventDefault(); d.hotCueClear(+btn.dataset.i); });
+    }
   });
 
   makeKnob(sec.querySelector('.eq-low'),  {min:-26, max:26, value:0, onChange:v => d.setEQ('low',  v)});
   makeKnob(sec.querySelector('.eq-mid'),  {min:-26, max:26, value:0, onChange:v => d.setEQ('mid',  v)});
   makeKnob(sec.querySelector('.eq-high'), {min:-26, max:26, value:0, onChange:v => d.setEQ('high', v)});
 
-  pitchCtrl[prefix] = makeFader(sec.querySelector('.pitch'), {min:0.5, max:1.5, value:1, vertical:true, onChange:v => d.setRate(v)});
+  // 调速推子：同时刷新百分比读数。±15% 是时间伸缩的听感安全区，超出标黄提醒
+  const pitchLab = sec.querySelector('.pitch-lab');
+  const showPitch = v => {
+    if (!pitchLab) return;
+    const pct = (v - 1) * 100;
+    pitchLab.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+    pitchLab.className = 'pitch-lab ' + (Math.abs(pct) <= 15 ? 'safe' : 'risk');
+  };
+  pitchCtrl[prefix] = makeFader(sec.querySelector('.pitch'), {min:0.5, max:1.5, value:1, vertical:true,
+    onChange:v => { d.setRate(v); showPitch(v); }});
+  showPitch(1);
   makeFader(sec.querySelector('.chan'), {min:0, max:1, value:1, vertical:true, onChange:v => d.setChannel(v)});
 
   const jog = sec.querySelector('.jog');
@@ -996,6 +1267,7 @@ const pitchCtrl = {a:null, b:null};
     jactive=true; jcuePos = d.position(); jlastPos = jcuePos;
     js = e.clientY; jlastT = performance.now();
     jog.setPointerCapture(e.pointerId);
+    d.beginScratch();
   });
   jog.addEventListener('pointermove', e => {
     if(!jactive) return;
@@ -1006,10 +1278,30 @@ const pitchCtrl = {a:null, b:null};
     d.scratchTo(newPos, vel);
     jlastPos = newPos; jlastT = now;
   });
-  jog.addEventListener('pointerup', () => { jactive=false; d.endScratch(); });
+  const endJog = () => { if(!jactive) return; jactive=false; d.endScratch(); };
+  jog.addEventListener('pointerup', endJog);
+  jog.addEventListener('pointercancel', endJog);   // 少了它，触摸被系统打断后转盘会一直粘着走
 
+  // 进度条点击跳转
   const bar = sec.querySelector('.bar');
   bar.addEventListener('click', e => { const r=bar.getBoundingClientRect(); const f=(e.clientX-r.left)/r.width; if(d.audio.duration) d.audio.currentTime=f*d.audio.duration; });
+  // 波形点击 / 拖动跳转（波形比进度条直观得多，之前只能看不能点是明显的缺失）
+  const waveWrap = sec.querySelector('.wave-wrap');
+  let wDrag = false, wLastSeek = 0;
+  // seek 会重建 AudioBufferSourceNode，拖动时不节流的话每秒要销毁上百个节点（爆音 + GC）
+  const seekFromWave = (e, force) => {
+    const now = performance.now();
+    if (!force && now - wLastSeek < 80) return;
+    wLastSeek = now;
+    const r = waveWrap.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    if (d.audio.duration) d.audio.currentTime = f * d.audio.duration;
+  };
+  waveWrap.addEventListener('pointerdown', e => { wDrag = true; wLastSeek = 0; waveWrap.setPointerCapture(e.pointerId); seekFromWave(e, true); });
+  waveWrap.addEventListener('pointermove', e => { if (wDrag) seekFromWave(e, false); });
+  const endWave = e => { if (!wDrag) return; wDrag = false; if (e) seekFromWave(e, true); };
+  waveWrap.addEventListener('pointerup', endWave);
+  waveWrap.addEventListener('pointercancel', endWave);
 });
 
 /* ---------- 调音台 ---------- */
@@ -1017,8 +1309,10 @@ const crossCtrl = makeFader(qs('crossfader'), {min:0, max:1, value:0.5, vertical
   deckA.setCross(Math.cos(p*Math.PI/2));
   deckB.setCross(Math.sin(p*Math.PI/2));
 }});
-makeFader(qs('master'), {min:0, max:1, value:0.9, vertical:true,  onChange:v => { ensureAudio(); masterBus.gain.value = v; }});
-makeFader(qs('cuevol'), {min:0, max:1, value:0.7, vertical:true,  onChange:v => { ensureAudio(); cueBus.gain.value   = v; }});
+// 只缓存到 pending*，不在这里 ensureAudio()：
+// 页面一加载推子就会 render() 一次，那会在没有任何用户手势的情况下创建 AudioContext 并被挂起。
+makeFader(qs('master'), {min:0, max:1, value:0.9, vertical:true,  onChange:v => { pendingMaster = v; if (masterBus) masterBus.gain.value = v; }});
+makeFader(qs('cuevol'), {min:0, max:1, value:0.7, vertical:true,  onChange:v => { pendingCue = v;    if (cueBus)    cueBus.gain.value   = v; }});
 
 /* ---------- 播放列表 ---------- */
 let tracks = [];           // {name, url, duration}
@@ -1026,7 +1320,15 @@ let selectedIndex = null;
 const listEl = qs('trackList');
 
 const pendingAudio = [];
-function feedback(msg){ console.log('[feedback]', msg); const el = qs('importStatus'); if (el) el.textContent = msg; }
+// Toast：feedback 原来只写进 header 里一行小字，操作时几乎不可能注意到
+let _toastTimer = 0;
+function toast(msg){
+  const el = qs('toast'); if (!el) return;
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+function feedback(msg){ console.log('[feedback]', msg); const el = qs('importStatus'); if (el) el.textContent = msg; toast(msg); }
 let _errTimer = 0;
 function showError(msg){
   const el = qs('errors'); if (!el) return;
@@ -1047,8 +1349,10 @@ function checkProtocol(){
   const el = qs('protoWarn'); if (!el) return;
   el.style.display = 'flex';
   const m = el.querySelector('.msg');
-  m.innerHTML = '⚠ 检测到你正在用 <code>file:///</code> 协议直接打开本页 —— 浏览器禁止 <code>fetch(blob:…)</code>，所有本地音源都会「解码失败」（网页端 https 正常）。<br>'
-    + '请在 <code>E:\\Workbuddy\\Web-DJ\\</code> 目录下任选一种方式起一个本地 HTTP 服务器，然后改用 <code>http://localhost:8080/</code> 打开：'
+  // 注意：不要把本机绝对路径写进来（这是公开仓库）
+  m.innerHTML = '⚠ 检测到你正在用 <code>file:///</code> 协议直接打开本页 —— 浏览器禁止 <code>fetch(blob:…)</code>'
+    + '，所有本地音源都会「解码失败」（网页端 https 正常）。<br>'
+    + '在本文件所在目录里任选一种方式起一个本地 HTTP 服务器，然后改用 <code>http://localhost:8080/</code> 打开：'
     + '<div style="margin:6px 0 2px 0">'
     +   '<code>python -m http.server 8080</code>'
     + '</div>'
@@ -1066,17 +1370,13 @@ function checkProtocol(){
 function addFiles(files){
   console.log('[addFiles] called, count:', files ? files.length : 0);
   if (!files || !files.length){ feedback('未选择任何文件'); return; }
+  const added = [];
   for (const f of files){
-    console.log('[addFiles] file:', f.name, f.size, f.type);
     const fileId = 'f_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
     persistFile(fileId, f);                                          // 异步存进 IndexedDB
     const url = URL.createObjectURL(f);
-    console.log('[addFiles] blob:', url);
     const track = {name: f.name, url, duration: 0, bpm: 0, key: '', introEnd: 0, outroStart: 0, analyzed: false, fileId, size: f.size, unavailable: false};
-    tracks.push(track);
-    console.log('[addFiles] tracks now:', tracks.length);
-    renderPlaylist();                       // 选中即入列，不等元数据，列表立刻显示
-    scheduleSave();
+    tracks.push(track); added.push(track);
     const tmp = new Audio();                // 仅后台读取时长，失败也不影响显示
     pendingAudio.push(tmp);
     const cleanup = () => { const i = pendingAudio.indexOf(tmp); if(i>=0) pendingAudio.splice(i,1); };
@@ -1084,28 +1384,73 @@ function addFiles(files){
     tmp.addEventListener('error', () => { feedback(`「${f.name}」无法解码，时长未知`); cleanup(); });
     tmp.src = url;
   }
-  feedback(`已添加 ${files.length} 首到播放列表`);
+  // 重绘只做一次：拖 50 首歌原本会全量重建 50 次 DOM
+  renderPlaylist(); scheduleSave();
+  feedback(`已添加 ${added.length} 首到播放列表`);
+}
+/** 清空整个播放列表（连 IndexedDB 里存的音频一起删） */
+function clearPlaylist(){
+  if (!tracks.length){ feedback('播放列表本来就是空的'); return; }
+  if (!confirm(`确定清空全部 ${tracks.length} 首歌曲？浏览器里保存的音频文件也会一并删除。`)) return;
+  const n = tracks.length;
+  tracks.forEach(t => {
+    if (t.fileId) removeFile(t.fileId);
+    if (t.url && t.url.startsWith('blob:')) URL.revokeObjectURL(t.url);
+  });
+  tracks = []; selectedIndex = null;
+  deckA.eject(); deckB.eject();
+  renderPlaylist(); scheduleSave();
+  feedback(`已清空 ${n} 首歌曲`);
 }
 function renderPlaylist(){
   if (!listEl){ console.error('[renderPlaylist] listEl NOT FOUND'); return; }
-  console.log('[renderPlaylist] rendering', tracks.length, 'tracks');
-  listEl.innerHTML = '';
+  listEl.textContent = '';
   tracks.forEach((t, i) => {
     const li = document.createElement('li');
     if (i === selectedIndex) li.className = 'sel';
-    li.innerHTML = `<span class="tname">${t.name}${t.unavailable?' <span style="color:#E24B4A">⚡缺失</span>':''}</span><span class="tdur">${fmt(t.duration)}</span>
-      <button data-i="${i}" data-deck="a">→A</button>
-      <button data-i="${i}" data-deck="b">→B</button>
-      <button data-i="${i}" class="del-btn" style="background:transparent;border:none;color:var(--mut);font-size:14px;cursor:pointer;padding:0 4px" title="删除">✕</button>`;
-    li.addEventListener('click', e => { if (e.target.tagName === 'BUTTON') return; selectedIndex = i; renderPlaylist(); });
+    const name = document.createElement('span');
+    name.className = 'tname';
+    // 文件名必须用 textContent —— 拼进 innerHTML 的话，一个叫
+    // <img src=x onerror=...>.mp3 的文件就能执行脚本
+    name.textContent = t.name;
+    if (t.unavailable){
+      const w = document.createElement('span');
+      w.style.color = '#E24B4A'; w.textContent = ' ⚡缺失';
+      name.appendChild(w);
+    }
+    const dur = document.createElement('span');
+    dur.className = 'tdur'; dur.textContent = fmt(t.duration);
+    li.append(name, dur);
+    [['a','→A'],['b','→B']].forEach(([dk, label]) => {
+      const b = document.createElement('button');
+      b.dataset.i = i; b.dataset.deck = dk; b.textContent = label;
+      li.appendChild(b);
+    });
+    const del = document.createElement('button');
+    del.dataset.i = i; del.className = 'del-btn'; del.textContent = '✕'; del.title = '删除';
+    li.appendChild(del);
     listEl.appendChild(li);
   });
-  listEl.querySelectorAll('button').forEach(b => {
-    if(b.classList.contains('del-btn')){
-      b.addEventListener('click', () => { removeTrack(+b.dataset.i); });
-    } else {
-      b.addEventListener('click', () => loadTrack(+b.dataset.i, b.dataset.deck));
-    }
+}
+/* 事件委托：一次绑定，renderPlaylist 里不再逐个 addEventListener。
+   曲库上百首时，老写法每次重绘都要重建上百个监听器 */
+listEl.addEventListener('click', e => {
+  const li = e.target.closest('li'); if (!li) return;
+  const i = Array.prototype.indexOf.call(listEl.children, li);
+  if (i < 0) return;
+  const btn = e.target.closest('button');
+  if (!btn){ selectedIndex = i; renderPlaylist(); return; }
+  if (btn.classList.contains('del-btn')) { e.stopPropagation(); removeTrack(i); }
+  else loadTrack(i, btn.dataset.deck);
+});
+// 拖动排序会改变下标，而 deck.loadedIndex 存的是旧下标 —— 不修正的话
+// 「播放结束自动续播」和 Auto DJ 选曲都会跳到错的歌
+function remapLoadedIndices(mapFn){
+  ['a','b'].forEach(p => {
+    const d = decks[p];
+    if (d.loadedIndex == null) return;
+    const ni = mapFn(d.loadedIndex);
+    d.loadedIndex = (ni == null || ni === -1) ? null : ni;
   });
 }
 function removeTrack(i){
@@ -1114,25 +1459,32 @@ function removeTrack(i){
   if(t.fileId) removeFile(t.fileId);
   if(t.url && t.url.startsWith('blob:')) URL.revokeObjectURL(t.url);
   tracks.splice(i,1);
+  remapLoadedIndices(old => old === i ? null : (old > i ? old - 1 : old));
   if(selectedIndex===i) selectedIndex=null; else if(selectedIndex>i) selectedIndex--;
   renderPlaylist(); scheduleSave();
   feedback(`已删除「${t.name}」`);
 }
-function loadTrack(i, deckKey){
+/** 载入到指定唱盘。@param {boolean} keepSelection Auto DJ 自动选曲时不该抢走用户的高亮项 */
+function loadTrack(i, deckKey, keepSelection){
   const t = tracks[i]; if (!t) return;
   if (t.unavailable){ feedback(`「${t.name}」文件已丢失，请重新添加`); return; }
   const d = decks[deckKey];
   d.load(t.url, t.name, i);
-  if (t.size && t.size > 50*1024*1024) feedback(`「${t.name}」文件较大，解码需几秒…`);
-  selectedIndex = i; renderPlaylist();
+  if (!keepSelection){ selectedIndex = i; renderPlaylist(); }
 }
 function onDeckEnded(d){
-  // Auto DJ 接管时，OUT 路的自然结束由 autoDJUpdate 的过渡门控处理：
-  // 不要在这里默认“自动续播下一首”，否则会覆盖 autoDJ 选好的切入曲，造成状态错乱 / 卡住。
-  if (autoDJOn && autoDJOut === d) return;
-  if (d.loadedIndex != null && d.loadedIndex + 1 < tracks.length){
-    loadTrack(d.loadedIndex + 1, d.prefix); d.play();
+  // Auto DJ 接管时不要抢方向盘：过渡 / 准备切入都由状态机负责，
+  // 这里再自动续播会覆盖 autoDJ 选好的切入曲，造成状态错乱甚至卡住。
+  if (autoDJOn && (autoDJOut === d || autoDJState !== 'scanning')) return;
+  if (d.loadedIndex == null) return;
+  const next = d.loadedIndex + 1;
+  if (next >= tracks.length){
+    feedback('播放列表已播完，Deck ' + d.prefix.toUpperCase() + ' 停止');
+    return;
   }
+  loadTrack(next, d.prefix);
+  // 只在真的载入成功时才播 —— 否则（文件缺失等）play() 会把上一首从头再放一遍
+  if (d.loadedIndex === next) d.play();
 }
 qs('addBtn').addEventListener('click', () => { console.log('[addBtn] clicked, triggering fileInput'); qs('fileInput').click(); });
 qs('fileInput').addEventListener('change', e => { console.log('[fileInput] change, files:', e.target.files.length); addFiles(e.target.files); e.target.value=''; });
@@ -1166,27 +1518,57 @@ qs('recBtn').addEventListener('click', () => {
 /* ---------- 智能排序 ---------- */
 function smartOrder(){
   if(tracks.length<2){ feedback('至少需要 2 首歌曲才能排序'); return; }
-  // sort by BPM ascending (unknown BPM = last)
+  if(!tracks.some(t=>t.bpm)) feedback('还没有分析出任何 BPM，先把歌载入唱盘分析一下');
+  const oldOrder = tracks.slice();          // 排序前的顺序，用来把 loadedIndex 映射过去
+  // 按 BPM 升序；未知 BPM 排最后
   tracks.sort((a,b)=>(a.bpm||999) - (b.bpm||999));
+  // 不修正的话「播放结束自动续播」和 Auto DJ 都会按旧下标跳到错的歌
+  remapLoadedIndices(old => tracks.indexOf(oldOrder[old]));
   selectedIndex = null; renderPlaylist(); scheduleSave();
   feedback('已按 BPM 升序排列 '+tracks.length+' 首歌曲');
 }
 qs('smartOrderBtn').addEventListener('click', smartOrder);
+qs('clearListBtn').addEventListener('click', clearPlaylist);
 
 /* ---------- 切歌辅助 / 调性兼容性 ---------- */
 const KEY_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+/** 从调名里取音级序号 0–11，兼容 'C' / 'Am' / 'F#m' 等写法 */
+function keyPcOf(name){
+  if(!name) return -1;
+  const m = /^([A-G]#?)/.exec(String(name));
+  const i = m ? KEY_NAMES.indexOf(m[1]) : -1;
+  return i;
+}
+/** 调名 → 'maj' / 'min'（'Am' → min，'C' → maj） */
+function keyModeOf(name){
+  if(!name) return '';
+  return /m$/i.test(String(name)) ? 'min' : 'maj';
+}
+/**
+ * 转成「关系大调」的主音音级再比较 —— 这就是 Camelot 轮的思路：
+ * Am 与 C 共用同一组音，都是 8 号位，互相切换是最平滑的混音之一。
+ * 直接比主音会把 Am 和 C 当成两个不相干的调。
+ */
+function keyRelMajorPc(name){
+  const pc = keyPcOf(name);
+  if (pc < 0) return -1;
+  return keyModeOf(name) === 'min' ? (pc + 3) % 12 : pc;
+}
 function keyCompat(ka,kb){
   if(!ka||!kb) return '';
-  const ia=KEY_NAMES.indexOf(ka), ib=KEY_NAMES.indexOf(kb);
+  const ia=keyRelMajorPc(ka), ib=keyRelMajorPc(kb);
+  if(ia<0||ib<0) return '';
   if(ia===ib) return 'same';
-  const d=Math.abs(ia-ib);
-  if(d===7||d===5) return 'compatible';
+  // 音高类是循环的：B(11) 到 C(0) 只差 1 个半音，不是 11 个。
+  // 老代码没做环绕，A#(10) 与 C(0) 算出距离 10，被误判成「无关」，实际是大二度。
+  const raw=Math.abs(ia-ib), d=Math.min(raw, 12-raw);   // 环绕距离，取值 0..6
+  if(d===5) return 'compatible';      // 四度 / 五度（7 环绕后同为 5）
   if(d===1||d===2) return 'energy';
-  if(d===6) return 'avoid';
+  if(d===6) return 'avoid';           // 三全音
   return 'ok';
 }
 function keyCompatClass(c){ return {'same':'ok','compatible':'ok','energy':'warn','avoid':'bad','ok':'ok'}[c]||'ok'; }
-function keyCompatText(c){ return {'same':'完美','compatible':'五度圈兼容','energy':'升调能量','avoid':'建议避开','ok':'可行'}[c]||''; }
+function keyCompatText(c){ return {'same':'完美（同调 / 关系大小调）','compatible':'五度圈兼容','energy':'升调能量','avoid':'建议避开','ok':'可行'}[c]||''; }
 
 /* ---------- Tap Tempo ---------- */
 const tapTimes={a:[],b:[]};
@@ -1205,15 +1587,21 @@ qs('tapA').addEventListener('click',()=>tapBPM('a'));
 qs('tapB').addEventListener('click',()=>tapBPM('b'));
 
 /* ---------- 分析 UI 更新 ---------- */
-function updateAnalysisUI(){
+// updateAssist() 每帧都调它。值没变就别碰 DOM —— 下面还有 innerHTML 赋值，
+// 每帧重新解析 HTML 是这个循环里最贵的一项。
+let _analysisSig = '';
+function updateAnalysisUI(force){
   const bpmA=deckA.bpm||0, bpmB=deckB.bpm||0;
+  const ka=deckA.detectedKey||'', kb=deckB.detectedKey||'';
+  const sig = bpmA+'|'+bpmB+'|'+ka+'|'+kb+'|'+(deckA.loaded?1:0)+(deckB.loaded?1:0);
+  if (!force && sig === _analysisSig) return;
+  _analysisSig = sig;
   qs('bpm-a').textContent=bpmA||'--'; qs('bpm-b').textContent=bpmB||'--';
   if(bpmA&&bpmB){
     const diff=Math.abs(bpmA-bpmB), pct=Math.round(diff/Math.max(bpmA,bpmB)*100);
     qs('bpm-diff').textContent=diff.toFixed(1)+' BPM ('+pct+'%)';
     qs('bpm-diff').className=pct<=3?'ok':pct<=8?'warn':'bad';
   }
-  const ka=deckA.detectedKey,kb=deckB.detectedKey;
   qs('key-a').textContent=ka||'--'; qs('key-b').textContent=kb||'--';
   if(ka&&kb){
     const c=keyCompat(ka,kb);
@@ -1240,7 +1628,6 @@ function updateAnalysisUI(){
 // Auto DJ 状态机：idle → scanning(监听曲末) → ready(对齐BPM/相位) → transitioning(8秒渐变) → 回到 scanning
 let autoDJOn=false, autoDJState='idle', autoDJOut=null, autoDJIn=null;
 let autoDJStart=0, autoDJDuration=8;
-const xfFader=qs('crossfader');
 function toggleAutoDJ(){
   autoDJOn=!autoDJOn;
   qs('autoDJToggle').textContent='Auto DJ: '+(autoDJOn?'ON':'OFF');
@@ -1251,6 +1638,18 @@ function toggleAutoDJ(){
 }
 qs('autoDJToggle').addEventListener('click',toggleAutoDJ);
 
+/** 开始一次交叉渐变。方向按「哪路在播」判断，不再写死 A→B */
+function startTransition(){
+  const out = !deckA.audio.paused ? deckA : (!deckB.audio.paused ? deckB : null);
+  if (!out){ feedback('没有正在播放的唱盘，无法过渡'); return false; }
+  const inn = (out === deckA) ? deckB : deckA;
+  if (!inn.loaded){ feedback('另一路唱盘还没载入歌曲，先载入再过渡'); return false; }
+  autoDJOut = out; autoDJIn = inn;
+  autoDJDuration = 8; autoDJStart = performance.now();
+  autoDJState = 'transitioning';
+  inn.setCue(false); inn.play();
+  return true;
+}
 function autoDJUpdate(){
   const now=performance.now();
   // 过渡执行：手动 F 渐变不依赖 Auto DJ 开关，必须无条件执行
@@ -1258,8 +1657,9 @@ function autoDJUpdate(){
     const prog = Math.min((now - autoDJStart)/1000/autoDJDuration, 1);
     qs('autoDJTransFill').style.width = (prog*100)+'%';
     const p = prog;
-    autoDJOut.setCross(Math.cos(p*Math.PI/2));
-    autoDJIn.setCross(Math.sin(p*Math.PI/2));
+    // 走 crossCtrl 而不是直接 setCross：推子是唯一数据源，否则过渡期间推子不动，
+    // 一按方向键声音就跳回去（R5）
+    crossCtrl.set(autoDJOut === deckA ? p : 1 - p);
     autoDJOut.setEQ('low', Math.max(-26, -26*p*1.3));
     autoDJIn.setEQ('low', Math.max(-26, -26*(1-p)));
     autoDJIn.setEQ('mid', Math.max(-12, -12*(1-p)));
@@ -1270,35 +1670,46 @@ function autoDJUpdate(){
       reverbWet.gain.value = 0.5 * (1 - Math.pow(1-p, 3));
     }
     if(p >= 1){
-      autoDJOut.pause(); autoDJOut.setEQ('low',0); autoDJOut.setEQ('mid',0); autoDJOut.setEQ('high',0);
+      autoDJOut.pause();       autoDJOut.setEQ('low',0); autoDJOut.setEQ('mid',0); autoDJOut.setEQ('high',0);
       autoDJOut.setReverb(0);
       autoDJIn.setEQ('low',0); autoDJIn.setEQ('mid',0); autoDJIn.setReverb(0);
-      autoDJOut.setCross(0); autoDJIn.setCross(1);
       if(reverbWet) reverbWet.gain.value = 0;
+      // 推子拨到「切入路全开」的一侧。老代码写死 set(1)，当 B 是 OUT 路时会把
+      // 正在播的 A 静音 —— 过渡一结束全场没声音。方向必须按实际角色算。
+      crossCtrl.set(autoDJOut === deckA ? 1 : 0);
       autoDJState='scanning';
       qs('autoDJStatus').textContent='等待中';
       qs('autoDJStatus').className='status on';
       qs('autoDJTransFill').style.width='0';
       qs('autoDJNext').textContent='--';
       autoDJOut=null; autoDJIn=null;
-      // 同步交叉推子：让推子视觉与增益一致，避免方向键随后跳变
-      crossCtrl.set(1);
     }
     if(!autoDJOn) return;
   }
   if(!autoDJOn) return;
   if(autoDJState==='scanning'){
+    // 两路都没在播：直接挑一首起头，否则「Auto DJ: ON」之后什么都不发生
+    if(deckA.audio.paused && deckB.audio.paused && tracks.length){
+      let startI = 0;
+      if (selectedIndex != null) startI = selectedIndex;
+      else if (deckA.loadedIndex != null) startI = (deckA.loadedIndex + 1) % tracks.length;
+      loadTrack(startI, 'a', true);
+      crossCtrl.set(0);                       // 先把推子拨到 A 侧，避免起播就两路齐鸣
+      deckA.play();
+      qs('autoDJStatus').textContent='已起播';
+      return;
+    }
     let playing=null,idleDeck=null;
-    if(!deckA.audio.paused&&deckA.audio.duration-deckA.audio.currentTime<60) playing=deckA,idleDeck=deckB;
-    if(!deckB.audio.paused&&deckB.audio.duration-deckB.audio.currentTime<60) playing=deckB,idleDeck=deckA;
-    if(playing && idleDeck && autoDJState==='scanning'){
+    // 用 else if：两个 if 并列时，两路同时接近曲末会让后一句静默覆盖前一句的结果
+    if(!deckA.audio.paused && deckA.audio.duration-deckA.audio.currentTime<60){ playing=deckA; idleDeck=deckB; }
+    else if(!deckB.audio.paused && deckB.audio.duration-deckB.audio.currentTime<60){ playing=deckB; idleDeck=deckA; }
+    if(playing && idleDeck && tracks.length){
       autoDJOut=playing; autoDJIn=idleDeck;
       const ni=autoDJOut.loadedIndex;
-      // find next compatible track (BPM within 8%, or same key)
+      // 智能选曲：在接下来 5 首里挑 BPM 最接近（±3% 最优）且调性兼容的
       let nextI = ni!=null ? ni+1 : 0;
       if(nextI >= tracks.length) nextI = 0;
       const outTrack = ni!=null ? tracks[ni] : null;
-      // try to find best match within next few tracks
       let bestI = nextI, bestScore = -1;
       for(let i=nextI; i<Math.min(nextI+5, tracks.length); i++){
         if(i===ni) continue;
@@ -1309,15 +1720,14 @@ function autoDJUpdate(){
           if(score > bestScore){ bestScore = score; bestI = i; }
         }
       }
-      loadTrack(bestI, autoDJIn.prefix);
+      loadTrack(bestI, autoDJIn.prefix, true);   // 自动选曲不该抢走用户手动选中的高亮
       autoDJIn.setRate(autoDJOut.rate);
       if(pitchCtrl[autoDJIn.prefix]) pitchCtrl[autoDJIn.prefix].set(autoDJOut.rate);
       autoDJState='ready';
       qs('autoDJStatus').textContent='准备切入';
       qs('autoDJStatus').className='status trans';
-      qs('autoDJNext').textContent=tracks[bestI].name;
-      // start cueing: pre-listen the next deck
-      autoDJIn.setCue(true);
+      qs('autoDJNext').textContent = tracks[bestI] ? tracks[bestI].name : '--';
+      autoDJIn.setCue(true);   // 预听下一路
     }
   }
   if(autoDJState==='ready'){
@@ -1343,11 +1753,11 @@ function autoDJUpdate(){
     // trigger transition at outro start or remaining time
     const triggerAt = Math.max(outroStart - 2, autoDJOut.audio.duration - autoDJDuration - 2);
     if(autoDJOut.audio.currentTime >= triggerAt || rem <= autoDJDuration + 2){
-      autoDJState='transitioning'; autoDJStart = performance.now();
+      autoDJStart = performance.now();
+      autoDJState = 'transitioning';
       qs('autoDJStatus').textContent='过渡中';
       autoDJIn.setCue(false); autoDJIn.play();
       qs('autoDJTransFill').style.transition='none';
-      // enable reverb wet
       if(reverbWet) reverbWet.gain.value = 0.5;
     }
   }
@@ -1366,19 +1776,40 @@ const keyMap={
     const dst=src===deckA?deckB:deckA;
     syncBPM(dst, src);
   },
-  'ArrowLeft':()=>{const d=decks[activeDeck];d.setRate(Math.max(0.5,d.rate-0.02));if(pitchCtrl[d.prefix])pitchCtrl[d.prefix].set(d.rate);},
-  'ArrowRight':()=>{const d=decks[activeDeck];d.setRate(Math.min(1.5,d.rate+0.02));if(pitchCtrl[d.prefix])pitchCtrl[d.prefix].set(d.rate);},
+  ' ':()=>{ decks[activeDeck].toggle(); },        // 空格：播/停「当前操作 Deck」
+  'ArrowLeft':()=>setPitch(decks[activeDeck], decks[activeDeck].rate-0.005),
+  'ArrowRight':()=>setPitch(decks[activeDeck], decks[activeDeck].rate+0.005),
   'ArrowUp':()=>{ crossCtrl.set(Math.max(0, crossCtrl.get()-0.05)); },   // 交叉推子左移 5%
   'ArrowDown':()=>{ crossCtrl.set(Math.min(1, crossCtrl.get()+0.05)); }, // 交叉推子右移 5%
-  'Tab':(e)=>{e.preventDefault();const to=deckA.crossGain.gain.value>deckB.crossGain.gain.value?0:1;crossCtrl.set(to);},
-  'f':()=>{autoDJDuration=8;autoDJOut=deckA;autoDJIn=deckB;autoDJStart=performance.now();autoDJState='transitioning';autoDJIn.setCue(false);autoDJIn.play();feedback('手动渐变过渡 8s');},
+  // 读 crossCtrl 而不是 crossGain：推子才是唯一数据源，读增益在过渡中会拿到过期值
+  'Tab':(e)=>{e.preventDefault(); crossCtrl.set(crossCtrl.get()>0.5 ? 0 : 1);},
+  // 老实现写死 A→B：B 在播时按 F 等于把静音的 A 淡出到 B，方向完全是反的
+  'f':()=>{ if(startTransition()) feedback('手动交叉渐变 8s'); },
   't':()=>toggleAutoDJ(),
   '?':()=>{const el=qs('shortcuts');el.style.display=el.style.display==='none'?'flex':'none';},
-  'd':()=>{activeDeck=activeDeck==='a'?'b':'a';feedback('当前操作 Deck: '+activeDeck.toUpperCase());},
+  'd':()=>{activeDeck=activeDeck==='a'?'b':'a';setActiveDeckUI();feedback('当前操作 Deck: '+activeDeck.toUpperCase());},
+  'r':()=>{ setPitch(decks[activeDeck], 1); feedback('调速已归零（100%）'); },
+  '[':()=>{ decks[activeDeck].loopIn();  feedback('循环 IN  @ '+fmt(decks[activeDeck].position())); },
+  ']':()=>{ decks[activeDeck].loopOut(); feedback('循环 OUT @ '+fmt(decks[activeDeck].position())); },
+  '\\':()=>{ decks[activeDeck].loopExit(); feedback('退出循环'); },
+  'z':()=>decks[activeDeck].hotCueTap(0), 'x':()=>decks[activeDeck].hotCueTap(1),
+  'c':()=>decks[activeDeck].hotCueTap(2), 'v':()=>decks[activeDeck].hotCueTap(3),
+  'Escape':()=>{ qs('shortcuts').style.display='none'; },
 };
+/** 统一入口：改速率时同步刷新推子和百分比读数，避免三处状态不一致 */
+function setPitch(d, r){
+  r = Math.max(0.5, Math.min(1.5, r));
+  d.setRate(r);
+  if (pitchCtrl[d.prefix]) pitchCtrl[d.prefix].set(r);
+}
+function setActiveDeckUI(){
+  const el = qs('activeDeckLabel');
+  if (el){ el.textContent = activeDeck.toUpperCase(); el.style.color = activeDeck === 'a' ? 'var(--accentA)' : 'var(--accentB)'; }
+}
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT')return;
-  if(keyMap[e.key]){e.preventDefault();keyMap[e.key](e);}
+  const fn = keyMap[e.key] || keyMap[e.key.toLowerCase()];
+  if(fn){e.preventDefault();fn(e);}
 });
 qs('shortcutsClose').addEventListener('click',()=>{qs('shortcuts').style.display='none';});
 
@@ -1389,10 +1820,11 @@ function updateAssist(){
     const d=decks[p];
     const cur=d.audio.currentTime||0;
     d.detectBeat(now);
+    // 实时估算只作兜底：离线分析已出结果时 estimateKey 内部会直接返回
     if(d.loaded&&now-d._keyTimer>2000){d.estimateKey();d._keyTimer=now;}
     if(d.bpm){
       const ph=d.getBeatPhase(cur);
-      const dot=qs('beat-'+p);
+      const dot=d._beatDot || (d._beatDot = qs('beat-'+p));
       if(dot){dot.className='beat-dot'+(ph<0.15||ph>0.85?' on':'')+(p==='b'?' b':'');}
     }
     // energy sampling for intro/outro analysis (every 0.5s)
@@ -1403,16 +1835,20 @@ function updateAssist(){
       if(d.energySamples.length > 600) d.energySamples.shift(); // cap at ~5 min
     }
     // store analysis results back to track metadata
+    // 分析结果回写曲目元数据。
+    // 注意条件里带 !t.analyzed：老代码只要没分析完就每帧进来一次，
+    // 每帧对最多 600 个采样做 map+sort，白白烧 CPU。这里限到每 2 秒一次。
     const ti = d.loadedIndex;
     if(ti != null && ti < tracks.length && d.bpm > 0 && d.detectedKey){
       const t = tracks[ti];
-      if(!t.analyzed || t.bpm !== d.bpm || t.key !== d.detectedKey){
+      const dirty = !t.analyzed || t.bpm !== d.bpm || t.key !== d.detectedKey;
+      if(dirty && now - d._metaWriteTime > 2000){
+        d._metaWriteTime = now;
         t.bpm = d.bpm; t.key = d.detectedKey;
         if(d.energySamples.length > 10){
-          const peaks = d.energySamples.map(s=>s.e).sort((a,b)=>b-a);
-          const peakE = peaks[0]||0.01;
+          const peakE = d.energySamples.reduce((m,s)=>Math.max(m,s.e), 0) || 0.01;
           const threshold = peakE * 0.15;
-          // intro: find first sustained energy above threshold
+          // intro: 第一处连续三点都超过阈值的能量起点
           let introEnd = 5;
           for(let i=0;i<d.energySamples.length-3;i++){
             if(d.energySamples[i].e>threshold && d.energySamples[i+1].e>threshold && d.energySamples[i+2].e>threshold){
@@ -1420,7 +1856,7 @@ function updateAssist(){
             }
           }
           t.introEnd = Math.min(introEnd, d.audio.duration*0.3);
-          // outro: energy below threshold near end
+          // outro: 末尾附近第一处连续三点都低于阈值
           let outroStart = d.audio.duration - 5;
           for(let i=d.energySamples.length-1;i>=3;i--){
             if(d.energySamples[i].e<threshold && d.energySamples[i-1].e<threshold && d.energySamples[i-2].e<threshold){
@@ -1440,31 +1876,48 @@ function updateAssist(){
 /* ---------- 时钟：进度 / 转盘旋转 ---------- */
 function fmt(s){ if (!isFinite(s)) return '0:00'; const m=Math.floor(s/60), ss=Math.floor(s%60); return m + ':' + String(ss).padStart(2,'0'); }
 function tick(){
+  const now = performance.now();
   ['a','b'].forEach(prefix => {
-    const d = decks[prefix], a = d.audio;
-    // 自然播放到末尾：触发 ended，由 onDeckEnded 续播下一首
-    if (d.isPlaying && d.buffer && d.position() >= d.buffer.duration - 0.03){
+    const d = decks[prefix], a = d.audio, ui = d.ui;
+    const dur = a.duration || 0;
+    // 搓碟到头/到尾：把节点停在边界上，否则 source 播完（尤其是倒放到 0）后就再也叫不动了
+    if (d.scratching && d.buffer){
+      const p = d.position();
+      if (p <= 0.001 || p >= d.buffer.duration - 0.001) d._retime(0, true);
+    }
+    // 自然播放到末尾：触发 ended，由 onDeckEnded 续播下一首（搓碟时不算）
+    if (d.isPlaying && !d.scratching && d.buffer && d.position() >= d.buffer.duration - 0.03){
       d.isPlaying = false; d._pausedAt = d.buffer.duration;
       if (d._onEnded) d._onEnded();
     }
-    const cur = a.currentTime || 0, dur = a.duration || 0;
-    qs(prefix + '-fill').style.width = (dur ? cur/dur*100 : 0) + '%';
-    qs(prefix + '-cur').textContent = fmt(cur);
-    qs(prefix + '-dur').textContent = dur ? fmt(dur) : '0:00';
-    const ring = qs(prefix + '-ring');
-    ring.style.background = `conic-gradient(var(--accent) ${dur ? cur/dur*360 : 0}deg, rgba(255,255,255,0.06) 0deg)`;
-    const now = performance.now();
+    const cur = a.currentTime || 0;
+    const pct = dur ? cur/dur : 0;
+    ui.fill.style.width = (pct*100) + '%';
+    // 时间文本每秒才变一次，没必要每帧写 DOM
+    const curText = fmt(cur);
+    if (curText !== d._lastCurText){ d._lastCurText = curText; ui.cur.textContent = curText; }
+    ui.dur.textContent = dur ? fmt(dur) : '0:00';
+    // 只改 CSS 变量：整条 conic-gradient 重新解析是这个循环里最贵的一项
+    ui.ring.style.setProperty('--p', (pct*360).toFixed(1) + 'deg');
     const rotRate = d.scratching ? d._rate : d.rate;   // 搓碟时转盘跟随瞬时速率旋转
     if (!a.paused){ const dt = (now - d._last)/1000; d.rotation += dt*120*rotRate; }
     d._last = now;
-    qs(prefix + '-jog').style.transform = `rotate(${d.rotation}deg)`;
-    const head = qs(prefix + '-wavehead');
-    if(head) head.style.left = (dur ? cur/dur*100 : 0) + '%';
+    ui.jog.style.transform = `rotate(${d.rotation}deg)`;
+    if (ui.head) ui.head.style.left = (pct*100) + '%';
     if (d.loop && d.isPlaying && !d.scratching && d.buffer && d.position() >= d.loop.end - 0.03) d.seek(d.loop.start);
-    const vu = qs(prefix + '-vu');
-    if (vu){ const lv = d._level(); vu.style.width = (lv*100) + '%'; vu.style.filter = lv > 0.98 ? 'brightness(1.4) saturate(1.5)' : ''; }
+    if (ui.vu){
+      const lv = d._level();
+      ui.vu.style.width = (lv*100) + '%';
+      ui.vu.style.filter = lv > 0.98 ? 'brightness(1.4) saturate(1.5)' : '';
+    }
   });
-  const mv = qs('masterVu'); if (mv) mv.style.width = (masterLevel()*100) + '%';
+  const mv = qs('masterVu');
+  if (mv){
+    const ml = masterLevel();
+    mv.style.width = (ml*100) + '%';
+    mv.style.filter = ml > 0.98 ? 'brightness(1.4) saturate(1.5)' : '';
+    if (mv.parentElement) mv.parentElement.classList.toggle('clip', ml >= 0.999);
+  }
   autoDJUpdate();
   updateAssist();
   requestAnimationFrame(tick);
@@ -1474,6 +1927,7 @@ restorePlaylist();
 checkProtocol();     // file:// 直接打开时给清晰引导（fetch blob 受限）
 initOnboarding();
 initDragDrop();
+setActiveDeckUI();
 /* 窗口尺寸变化时重绘波形（canvas 像素需按新宽度重算） */
 window.addEventListener('resize', () => { deckA.drawWave(); deckB.drawWave(); });
 
