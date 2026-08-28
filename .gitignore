@@ -1,5 +1,8 @@
-# 临时校验脚本（本地语法检查用，不入库）
+# 本地校验脚本（不入库）：
+#   _check.js —— 抽出 index.html 的 <script> 交给 node --check 做语法检查
+#   _smoke.js —— 无头冒烟测试：用最小 DOM 桩在 Node 里跑一遍脚本 + 纯算法断言
 _check.js
+_smoke.js
 
 # 导出的混音文件（本地产物，不入库；音频走 IndexedDB 持久化）
 *.webm
